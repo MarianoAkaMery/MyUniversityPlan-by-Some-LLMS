@@ -7,6 +7,7 @@ type ScheduleContextValue = {
   subjects: Subject[];
   lessons: Lesson[];
   addSubject: (subject: Omit<Subject, "id">) => void;
+  removeSubject: (subjectId: string) => void;
   addLesson: (lesson: Omit<Lesson, "id" | "completed">) => void;
   toggleLessonCompleted: (lessonId: string) => void;
 };
@@ -110,6 +111,14 @@ export const ScheduleProvider = ({ children }: { children: React.ReactNode }) =>
     }));
   };
 
+  const removeSubject = (subjectId: string) => {
+    setState((prev) => ({
+      ...prev,
+      subjects: prev.subjects.filter((subject) => subject.id !== subjectId),
+      lessons: prev.lessons.filter((lesson) => lesson.subjectId !== subjectId),
+    }));
+  };
+
   const addLesson = (lesson: Omit<Lesson, "id" | "completed">) => {
     setState((prev) => ({
       ...prev,
@@ -137,6 +146,7 @@ export const ScheduleProvider = ({ children }: { children: React.ReactNode }) =>
     subjects: state.subjects,
     lessons: state.lessons,
     addSubject,
+    removeSubject,
     addLesson,
     toggleLessonCompleted,
   };

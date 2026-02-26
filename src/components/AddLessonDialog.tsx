@@ -35,7 +35,7 @@ const formatMinutes = (minutes: number) => {
 };
 
 export const AddLessonDialog: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { subjects, addSubject, addLesson } = useScheduleStore();
+  const { subjects, addSubject, removeSubject, addLesson } = useScheduleStore();
   const [subjectName, setSubjectName] = React.useState("");
   const [subjectColor, setSubjectColor] = React.useState("#60a5fa");
   const [selectedSubject, setSelectedSubject] = React.useState<string>(
@@ -48,8 +48,9 @@ export const AddLessonDialog: React.FC<{ children: React.ReactNode }> = ({ child
   const canAddLesson = Boolean(selectedSubject) && Number(startTime) < Number(endTime);
 
   React.useEffect(() => {
-    if (!selectedSubject && subjects[0]) {
-      setSelectedSubject(subjects[0].id);
+    const selectedStillExists = subjects.some((subject) => subject.id === selectedSubject);
+    if (!selectedStillExists) {
+      setSelectedSubject(subjects[0]?.id ?? "");
     }
   }, [subjects, selectedSubject]);
 
@@ -164,6 +165,11 @@ export const AddLessonDialog: React.FC<{ children: React.ReactNode }> = ({ child
               <Button className="w-full" onClick={handleAddLesson} disabled={!canAddLesson}>
                 Aggiungi Lezione
               </Button>
+              {subjects.length === 0 && (
+                <p className="text-xs text-amber-700">
+                  Aggiungi prima una materia dal tab Materie.
+                </p>
+              )}
             </div>
           </TabsContent>
           <TabsContent value="subjects">
@@ -206,7 +212,17 @@ export const AddLessonDialog: React.FC<{ children: React.ReactNode }> = ({ child
                       />
                       <span className="text-sm font-medium text-slate-700">{subject.name}</span>
                     </div>
-                    <span className="text-xs text-slate-400">{subject.color}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-400">{subject.color}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                        onClick={() => removeSubject(subject.id)}
+                      >
+                        Elimina
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
