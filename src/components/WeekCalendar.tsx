@@ -23,8 +23,6 @@ const MONTHS = [
   "dic",
 ];
 
-const DEFAULT_START_HOUR = 8;
-const DEFAULT_END_HOUR = 20;
 const HOUR_HEIGHT = 86;
 const LESSON_GAP_X = 6;
 
@@ -102,6 +100,8 @@ const packLessonsForDay = (dayLessons: Lesson[]): PackedLesson[] => {
 
 export type WeekCalendarProps = {
   weekOffset: number;
+  visibleStartHour: number;
+  visibleEndHour: number;
   canPrevWeek: boolean;
   canNextWeek: boolean;
   onPrevWeek: () => void;
@@ -110,19 +110,16 @@ export type WeekCalendarProps = {
 
 export const WeekCalendar: React.FC<WeekCalendarProps> = ({
   weekOffset,
+  visibleStartHour,
+  visibleEndHour,
   canPrevWeek,
   canNextWeek,
   onPrevWeek,
   onNextWeek,
 }) => {
   const { lessons, subjects, isLessonCompleted, toggleLessonCompleted } = useScheduleStore();
-  const minLessonStart =
-    lessons.length > 0 ? Math.min(...lessons.map((lesson) => lesson.startMinutes)) : DEFAULT_START_HOUR * 60;
-  const maxLessonEnd =
-    lessons.length > 0 ? Math.max(...lessons.map((lesson) => lesson.endMinutes)) : DEFAULT_END_HOUR * 60;
-  const startHour = Math.min(DEFAULT_START_HOUR, Math.floor(minLessonStart / 60));
-  const endHour = Math.max(DEFAULT_END_HOUR, Math.ceil(maxLessonEnd / 60));
-  const safeEndHour = Math.max(endHour, startHour + 1);
+  const startHour = Math.max(0, Math.min(23, visibleStartHour));
+  const safeEndHour = Math.max(startHour + 1, Math.min(24, visibleEndHour));
   const today = new Date();
   const weekStart = startOfWeekMonday(addDays(today, weekOffset * 7));
   const weekEnd = addDays(weekStart, 4);
@@ -193,7 +190,14 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
         </div>
         <div className="col-span-5 grid grid-cols-5 border-l border-slate-200">
           {DAYS.map((_, dayIndex) => {
-            const dayLessons = lessons.filter((lesson) => lesson.dayIndex === dayIndex);
+            const visibleStartMinutes = startHour * 60;
+            const visibleEndMinutes = safeEndHour * 60;
+            const dayLessons = lessons.filter(
+              (lesson) =>
+                lesson.dayIndex === dayIndex &&
+                lesson.endMinutes > visibleStartMinutes &&
+                lesson.startMinutes < visibleEndMinutes
+            );
             const packedLessons = packLessonsForDay(dayLessons);
 
             return (
@@ -216,8 +220,10 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
                   const dateKey = toDateKey(addDays(weekStart, dayIndex));
                   const completed = isLessonCompleted(lesson.id, dateKey);
 
-                  const startOffset = (lesson.startMinutes - startHour * 60) * (HOUR_HEIGHT / 60);
-                  const rawHeight = (lesson.endMinutes - lesson.startMinutes) * (HOUR_HEIGHT / 60);
+                  const clippedStart = Math.max(lesson.startMinutes, visibleStartMinutes);
+                  const clippedEnd = Math.min(lesson.endMinutes, visibleEndMinutes);
+                  const startOffset = (clippedStart - startHour * 60) * (HOUR_HEIGHT / 60);
+                  const rawHeight = (clippedEnd - clippedStart) * (HOUR_HEIGHT / 60);
                   const top = clamp(startOffset, 0, totalHeight - 10);
                   const height = clamp(rawHeight, 24, totalHeight - top);
                   const width = `calc((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount})`;
