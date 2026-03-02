@@ -43,6 +43,13 @@ const addDays = (date: Date, days: number) => {
   return copy;
 };
 
+const toDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const formatWeekRange = (start: Date, end: Date) => {
   const startLabel = `${start.getDate()} ${MONTHS[start.getMonth()]}`;
   const endLabel = `${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
@@ -95,16 +102,20 @@ const packLessonsForDay = (dayLessons: Lesson[]): PackedLesson[] => {
 
 export type WeekCalendarProps = {
   weekOffset: number;
+  canPrevWeek: boolean;
+  canNextWeek: boolean;
   onPrevWeek: () => void;
   onNextWeek: () => void;
 };
 
 export const WeekCalendar: React.FC<WeekCalendarProps> = ({
   weekOffset,
+  canPrevWeek,
+  canNextWeek,
   onPrevWeek,
   onNextWeek,
 }) => {
-  const { lessons, subjects, toggleLessonCompleted } = useScheduleStore();
+  const { lessons, subjects, isLessonCompleted, toggleLessonCompleted } = useScheduleStore();
   const today = new Date();
   const weekStart = startOfWeekMonday(addDays(today, weekOffset * 7));
   const weekEnd = addDays(weekStart, 4);
@@ -127,10 +138,20 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" className="h-9 w-9 rounded-full p-0" onClick={onPrevWeek}>
+          <Button
+            variant="ghost"
+            className="h-9 w-9 rounded-full p-0"
+            onClick={onPrevWeek}
+            disabled={!canPrevWeek}
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" className="h-9 w-9 rounded-full p-0" onClick={onNextWeek}>
+          <Button
+            variant="ghost"
+            className="h-9 w-9 rounded-full p-0"
+            onClick={onNextWeek}
+            disabled={!canNextWeek}
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
@@ -185,6 +206,8 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
                 {packedLessons.map(({ lesson, column, columnCount }) => {
                   const subject = subjectsById.get(lesson.subjectId);
                   if (!subject) return null;
+                  const dateKey = toDateKey(addDays(weekStart, dayIndex));
+                  const completed = isLessonCompleted(lesson.id, dateKey);
 
                   const startOffset = (lesson.startMinutes - START_HOUR * 60) * (HOUR_HEIGHT / 60);
                   const rawHeight = (lesson.endMinutes - lesson.startMinutes) * (HOUR_HEIGHT / 60);
@@ -202,7 +225,8 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
                       height={height - 12}
                       left={left}
                       width={width}
-                      onToggle={toggleLessonCompleted}
+                      completed={completed}
+                      onToggle={() => toggleLessonCompleted(lesson.id, dateKey)}
                     />
                   );
                 })}

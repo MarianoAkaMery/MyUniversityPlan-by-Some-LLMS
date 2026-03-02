@@ -11,10 +11,10 @@ export type Lesson = {
   startMinutes: number;
   endMinutes: number;
   notes: string;
-  completed: boolean;
 };
 
 export type ScheduleState = {
   subjects: Subject[];
   lessons: Lesson[];
+  completedByDate: Record<string, true>;
 };

@@ -11,16 +11,18 @@ const formatTime = (minutes: number) => {
 type LessonBlockProps = {
   lesson: Lesson;
   subject: Subject;
+  completed: boolean;
   top: number;
   height: number;
   left: string;
   width: string;
-  onToggle: (lessonId: string) => void;
+  onToggle: () => void;
 };
 
 export const LessonBlock: React.FC<LessonBlockProps> = ({
   lesson,
   subject,
+  completed,
   top,
   height,
   left,
@@ -30,12 +32,12 @@ export const LessonBlock: React.FC<LessonBlockProps> = ({
   return (
     <button
       type="button"
-      onClick={() => onToggle(lesson.id)}
-      aria-pressed={lesson.completed}
+      onClick={onToggle}
+      aria-pressed={completed}
       className={cn(
         "lesson-card absolute rounded-2xl p-3 text-left text-white",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-        lesson.completed && "opacity-70 grayscale"
+        completed && "opacity-70 grayscale"
       )}
       style={{
         top,
@@ -54,12 +56,12 @@ export const LessonBlock: React.FC<LessonBlockProps> = ({
           {lesson.notes}
         </div>
       )}
-      {lesson.completed && (
+      {completed && (
         <div className="mt-2 inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold">
           ✓ Fatta
         </div>
       )}
-      {lesson.completed && (
+      {completed && (
         <div className="pointer-events-none absolute inset-0 rounded-2xl bg-black/10" />
       )}
     </button>
