@@ -22,6 +22,7 @@ type BackupPayload = {
   exportedAt: string;
   username: string;
   courseNotes: string;
+  generalCourseNotes: string;
   calendarWindow: CalendarWindow | null;
   schedule: ScheduleState;
 };
@@ -72,6 +73,88 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
+const parseInlineMarkdown = (text: string): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("**") && token.endsWith("**")) {
+      nodes.push(<strong key={`${match.index}-b`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("*") && token.endsWith("*")) {
+      nodes.push(<em key={`${match.index}-i`}>{token.slice(1, -1)}</em>);
+    } else {
+      const linkMatch = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
+      if (linkMatch) {
+        nodes.push(
+          <a
+            key={`${match.index}-l`}
+            href={linkMatch[2]}
+            target="_blank"
+            rel="noreferrer"
+            className="underline text-sky-700"
+          >
+            {linkMatch[1]}
+          </a>
+        );
+      } else {
+        nodes.push(token);
+      }
+    }
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+};
+
+const renderMarkdownPreview = (markdown: string) => {
+  const lines = markdown.split("\n");
+  const blocks: React.ReactNode[] = [];
+  let listItems: string[] = [];
+
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="list-disc space-y-1 pl-5">
+        {listItems.map((item, index) => (
+          <li key={`${item}-${index}`}>{parseInlineMarkdown(item)}</li>
+        ))}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  lines.forEach((line, index) => {
+    if (line.startsWith("- ")) {
+      listItems.push(line.slice(2));
+      return;
+    }
+    flushList();
+    if (line.trim() === "") {
+      blocks.push(<div key={`sp-${index}`} className="h-2" />);
+    } else {
+      blocks.push(
+        <p key={`p-${index}`} className="leading-relaxed">
+          {parseInlineMarkdown(line)}
+        </p>
+      );
+    }
+  });
+  flushList();
+
+  return blocks;
+};
+
 const AppContent = () => {
   const { subjects, lessons, isLessonCompleted, getWeekProgress, replaceSchedule, completedByDate } =
     useScheduleStore();
@@ -84,6 +167,7 @@ const AppContent = () => {
   const [draftEndHour, setDraftEndHour] = React.useState("15");
   const [draftUsername, setDraftUsername] = React.useState("Studente");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   const MIN_WEEK_OFFSET = -52;
   const MAX_WEEK_OFFSET = 52;
@@ -176,6 +260,7 @@ const AppContent = () => {
       exportedAt: new Date().toISOString(),
       username,
       courseNotes,
+      generalCourseNotes: courseNotes,
       calendarWindow,
       schedule: {
         subjects,
@@ -210,8 +295,14 @@ const AppContent = () => {
       setUsername(parsed.username.trim());
     }
 
-    if (typeof parsed.courseNotes === "string") {
-      setCourseNotes(parsed.courseNotes);
+    const importedNotes =
+      typeof parsed.courseNotes === "string"
+        ? parsed.courseNotes
+        : typeof parsed.generalCourseNotes === "string"
+          ? parsed.generalCourseNotes
+          : null;
+    if (typeof importedNotes === "string") {
+      setCourseNotes(importedNotes);
     }
 
     if (parsed.calendarWindow === null) {
@@ -235,6 +326,58 @@ const AppContent = () => {
     } catch {
       window.alert("Impossibile importare il file selezionato.");
     }
+  };
+
+  const updateCourseNotes = (nextValue: string, selectionStart?: number, selectionEnd?: number) => {
+    setCourseNotes(nextValue);
+    window.requestAnimationFrame(() => {
+      const textarea = notesTextareaRef.current;
+      if (!textarea) return;
+      if (typeof selectionStart === "number" && typeof selectionEnd === "number") {
+        textarea.focus();
+        textarea.setSelectionRange(selectionStart, selectionEnd);
+      }
+    });
+  };
+
+  const wrapSelection = (prefix: string, suffix: string) => {
+    const textarea = notesTextareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = courseNotes.slice(start, end) || "text";
+    const next = `${courseNotes.slice(0, start)}${prefix}${selected}${suffix}${courseNotes.slice(end)}`;
+    const caretStart = start + prefix.length;
+    const caretEnd = caretStart + selected.length;
+    updateCourseNotes(next, caretStart, caretEnd);
+  };
+
+  const addBulletList = () => {
+    const textarea = notesTextareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = courseNotes.slice(start, end);
+    const content = selected || "Item";
+    const bulleted = content
+      .split("\n")
+      .map((line) => (line.trim() ? `- ${line}` : "- "))
+      .join("\n");
+    const next = `${courseNotes.slice(0, start)}${bulleted}${courseNotes.slice(end)}`;
+    updateCourseNotes(next, start, start + bulleted.length);
+  };
+
+  const addLink = () => {
+    const textarea = notesTextareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = courseNotes.slice(start, end) || "Resource";
+    const url = window.prompt("Insert URL", "https://");
+    if (!url) return;
+    const markdownLink = `[${selected}](${url.trim()})`;
+    const next = `${courseNotes.slice(0, start)}${markdownLink}${courseNotes.slice(end)}`;
+    updateCourseNotes(next, start, start + markdownLink.length);
   };
 
   const weeklyStats = subjects
@@ -419,12 +562,37 @@ const AppContent = () => {
           <p className="mb-3 text-xs text-slate-500">
             Scrivi qui informazioni utili su esame, criteri di valutazione e consigli del docente.
           </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => wrapSelection("**", "**")}>
+              Bold
+            </Button>
+            <Button type="button" variant="secondary" className="h-8 px-3" onClick={() => wrapSelection("*", "*")}>
+              Italic
+            </Button>
+            <Button type="button" variant="secondary" className="h-8 px-3" onClick={addBulletList}>
+              Bullet List
+            </Button>
+            <Button type="button" variant="secondary" className="h-8 px-3" onClick={addLink}>
+              Link
+            </Button>
+          </div>
           <textarea
+            ref={notesTextareaRef}
             value={courseNotes}
             onChange={(event) => setCourseNotes(event.target.value)}
-            placeholder="Es. Esame scritto + orale, minimo 18/30, bonus frequenza..."
+            placeholder="Es. **Written + oral exam**, minimum 18/30, - attendance bonus"
             className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Preview</div>
+            <div className="space-y-1 text-sm text-slate-700">
+              {courseNotes.trim() ? (
+                renderMarkdownPreview(courseNotes)
+              ) : (
+                <p className="text-slate-400">Nothing to preview yet.</p>
+              )}
+            </div>
+          </div>
         </section>
 
         <footer className="pb-2 pt-1 text-center text-xs text-slate-500">
