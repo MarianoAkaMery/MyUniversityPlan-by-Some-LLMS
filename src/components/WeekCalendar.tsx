@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { useScheduleStore } from "../hooks/useScheduleStore";
 import { clamp } from "../lib/utils";
+import type { Lesson } from "../types/schedule";
 
 const DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven"];
 const MONTHS = [
@@ -25,6 +26,7 @@ const MONTHS = [
 const START_HOUR = 9;
 const END_HOUR = 12;
 const HOUR_HEIGHT = 86;
+const LESSON_GAP_X = 6;
 
 const startOfWeekMonday = (date: Date) => {
   const copy = new Date(date);
@@ -49,6 +51,48 @@ const formatWeekRange = (start: Date, end: Date) => {
 
 const formatTimeLabel = (hour: number) => `${hour}:00`;
 
+type PackedLesson = {
+  lesson: Lesson;
+  column: number;
+  columnCount: number;
+};
+
+const packLessonsForDay = (dayLessons: Lesson[]): PackedLesson[] => {
+  const sorted = [...dayLessons].sort((a, b) => {
+    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+    return a.endMinutes - b.endMinutes;
+  });
+
+  const packed: Array<{ lesson: Lesson; column: number; groupId: number }> = [];
+  const groupColumns = new Map<number, number>();
+  let groupId = -1;
+  let active: Array<{ endMinutes: number; column: number }> = [];
+
+  for (const lesson of sorted) {
+    active = active.filter((item) => item.endMinutes > lesson.startMinutes);
+    if (active.length === 0) {
+      groupId += 1;
+    }
+
+    const usedColumns = new Set(active.map((item) => item.column));
+    let column = 0;
+    while (usedColumns.has(column)) {
+      column += 1;
+    }
+
+    active.push({ endMinutes: lesson.endMinutes, column });
+    const requiredColumns = Math.max(...active.map((item) => item.column)) + 1;
+    groupColumns.set(groupId, Math.max(groupColumns.get(groupId) ?? 1, requiredColumns));
+    packed.push({ lesson, column, groupId });
+  }
+
+  return packed.map((item) => ({
+    lesson: item.lesson,
+    column: item.column,
+    columnCount: groupColumns.get(item.groupId) ?? 1,
+  }));
+};
+
 export type WeekCalendarProps = {
   weekOffset: number;
   onPrevWeek: () => void;
@@ -68,6 +112,7 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
   const totalHeight = hours.length * HOUR_HEIGHT;
   const isCurrentWeek = startOfWeekMonday(today).getTime() === weekStart.getTime();
+  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
@@ -119,29 +164,35 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
           ))}
         </div>
         <div className="col-span-5 grid grid-cols-5 border-l border-slate-200">
-          {DAYS.map((_, dayIndex) => (
-            <div
-              key={dayIndex}
-              className="relative border-r border-slate-200"
-              style={{ height: totalHeight }}
-            >
-              <div className="absolute inset-0 flex flex-col">
-                {hours.map((hour) => (
-                  <div
-                    key={hour}
-                    className="h-[86px] border-b border-dashed border-slate-200/70"
-                  />
-                ))}
-              </div>
-              {lessons
-                .filter((lesson) => lesson.dayIndex === dayIndex)
-                .map((lesson) => {
-                  const subject = subjects.find((item) => item.id === lesson.subjectId);
+          {DAYS.map((_, dayIndex) => {
+            const dayLessons = lessons.filter((lesson) => lesson.dayIndex === dayIndex);
+            const packedLessons = packLessonsForDay(dayLessons);
+
+            return (
+              <div
+                key={dayIndex}
+                className="relative border-r border-slate-200"
+                style={{ height: totalHeight }}
+              >
+                <div className="absolute inset-0 flex flex-col">
+                  {hours.map((hour) => (
+                    <div
+                      key={hour}
+                      className="h-[86px] border-b border-dashed border-slate-200/70"
+                    />
+                  ))}
+                </div>
+                {packedLessons.map(({ lesson, column, columnCount }) => {
+                  const subject = subjectsById.get(lesson.subjectId);
                   if (!subject) return null;
+
                   const startOffset = (lesson.startMinutes - START_HOUR * 60) * (HOUR_HEIGHT / 60);
                   const rawHeight = (lesson.endMinutes - lesson.startMinutes) * (HOUR_HEIGHT / 60);
                   const top = clamp(startOffset, 0, totalHeight - 10);
                   const height = clamp(rawHeight, 24, totalHeight - top);
+                  const width = `calc((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount})`;
+                  const left = `calc(${LESSON_GAP_X}px + ${column} * ((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount} + ${LESSON_GAP_X}px))`;
+
                   return (
                     <LessonBlock
                       key={lesson.id}
@@ -149,12 +200,15 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
                       subject={subject}
                       top={top + 6}
                       height={height - 12}
+                      left={left}
+                      width={width}
                       onToggle={toggleLessonCompleted}
                     />
                   );
                 })}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
