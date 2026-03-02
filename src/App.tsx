@@ -166,7 +166,7 @@ const AppContent = () => {
   const [draftStartHour, setDraftStartHour] = React.useState("9");
   const [draftEndHour, setDraftEndHour] = React.useState("15");
   const [draftUsername, setDraftUsername] = React.useState("Studente");
-  const [notesViewMode, setNotesViewMode] = React.useState<"editor" | "formatted">("editor");
+  const [notesViewMode, setNotesViewMode] = React.useState<"editor" | "formatted">("formatted");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
 
