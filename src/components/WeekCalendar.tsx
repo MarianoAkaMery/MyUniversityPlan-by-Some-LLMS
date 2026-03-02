@@ -23,8 +23,8 @@ const MONTHS = [
   "dic",
 ];
 
-const START_HOUR = 9;
-const END_HOUR = 12;
+const DEFAULT_START_HOUR = 8;
+const DEFAULT_END_HOUR = 20;
 const HOUR_HEIGHT = 86;
 const LESSON_GAP_X = 6;
 
@@ -116,11 +116,18 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
   onNextWeek,
 }) => {
   const { lessons, subjects, isLessonCompleted, toggleLessonCompleted } = useScheduleStore();
+  const minLessonStart =
+    lessons.length > 0 ? Math.min(...lessons.map((lesson) => lesson.startMinutes)) : DEFAULT_START_HOUR * 60;
+  const maxLessonEnd =
+    lessons.length > 0 ? Math.max(...lessons.map((lesson) => lesson.endMinutes)) : DEFAULT_END_HOUR * 60;
+  const startHour = Math.min(DEFAULT_START_HOUR, Math.floor(minLessonStart / 60));
+  const endHour = Math.max(DEFAULT_END_HOUR, Math.ceil(maxLessonEnd / 60));
+  const safeEndHour = Math.max(endHour, startHour + 1);
   const today = new Date();
   const weekStart = startOfWeekMonday(addDays(today, weekOffset * 7));
   const weekEnd = addDays(weekStart, 4);
   const weekLabel = formatWeekRange(weekStart, weekEnd);
-  const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
+  const hours = Array.from({ length: safeEndHour - startHour }, (_, i) => startHour + i);
   const totalHeight = hours.length * HOUR_HEIGHT;
   const isCurrentWeek = startOfWeekMonday(today).getTime() === weekStart.getTime();
   const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
@@ -209,7 +216,7 @@ export const WeekCalendar: React.FC<WeekCalendarProps> = ({
                   const dateKey = toDateKey(addDays(weekStart, dayIndex));
                   const completed = isLessonCompleted(lesson.id, dateKey);
 
-                  const startOffset = (lesson.startMinutes - START_HOUR * 60) * (HOUR_HEIGHT / 60);
+                  const startOffset = (lesson.startMinutes - startHour * 60) * (HOUR_HEIGHT / 60);
                   const rawHeight = (lesson.endMinutes - lesson.startMinutes) * (HOUR_HEIGHT / 60);
                   const top = clamp(startOffset, 0, totalHeight - 10);
                   const height = clamp(rawHeight, 24, totalHeight - top);
