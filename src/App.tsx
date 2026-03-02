@@ -73,88 +73,6 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
-const parseInlineMarkdown = (text: string): React.ReactNode[] => {
-  const nodes: React.ReactNode[] = [];
-  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    const token = match[0];
-    if (token.startsWith("**") && token.endsWith("**")) {
-      nodes.push(<strong key={`${match.index}-b`}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("*") && token.endsWith("*")) {
-      nodes.push(<em key={`${match.index}-i`}>{token.slice(1, -1)}</em>);
-    } else {
-      const linkMatch = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
-      if (linkMatch) {
-        nodes.push(
-          <a
-            key={`${match.index}-l`}
-            href={linkMatch[2]}
-            target="_blank"
-            rel="noreferrer"
-            className="underline text-sky-700"
-          >
-            {linkMatch[1]}
-          </a>
-        );
-      } else {
-        nodes.push(token);
-      }
-    }
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-
-  return nodes;
-};
-
-const renderMarkdownPreview = (markdown: string) => {
-  const lines = markdown.split("\n");
-  const blocks: React.ReactNode[] = [];
-  let listItems: string[] = [];
-
-  const flushList = () => {
-    if (listItems.length === 0) return;
-    blocks.push(
-      <ul key={`ul-${blocks.length}`} className="list-disc space-y-1 pl-5">
-        {listItems.map((item, index) => (
-          <li key={`${item}-${index}`}>{parseInlineMarkdown(item)}</li>
-        ))}
-      </ul>
-    );
-    listItems = [];
-  };
-
-  lines.forEach((line, index) => {
-    if (line.startsWith("- ")) {
-      listItems.push(line.slice(2));
-      return;
-    }
-    flushList();
-    if (line.trim() === "") {
-      blocks.push(<div key={`sp-${index}`} className="h-2" />);
-    } else {
-      blocks.push(
-        <p key={`p-${index}`} className="leading-relaxed">
-          {parseInlineMarkdown(line)}
-        </p>
-      );
-    }
-  });
-  flushList();
-
-  return blocks;
-};
-
 const AppContent = () => {
   const { subjects, lessons, isLessonCompleted, getWeekProgress, replaceSchedule, completedByDate } =
     useScheduleStore();
@@ -583,16 +501,11 @@ const AppContent = () => {
             placeholder="Es. **Written + oral exam**, minimum 18/30, - attendance bonus"
             className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Preview</div>
-            <div className="space-y-1 text-sm text-slate-700">
-              {courseNotes.trim() ? (
-                renderMarkdownPreview(courseNotes)
-              ) : (
-                <p className="text-slate-400">Nothing to preview yet.</p>
-              )}
-            </div>
-          </div>
+          <p className="mt-2 text-xs text-slate-400">
+            Formatting shortcuts: <span className="font-mono">**bold**</span>,{" "}
+            <span className="font-mono">*italic*</span>, <span className="font-mono">- list item</span>,{" "}
+            <span className="font-mono">[label](https://...)</span>
+          </p>
         </section>
 
         <footer className="pb-2 pt-1 text-center text-xs text-slate-500">
