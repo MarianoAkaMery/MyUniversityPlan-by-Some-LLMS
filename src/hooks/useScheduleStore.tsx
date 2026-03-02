@@ -30,12 +30,14 @@ const occurrenceKey = (lessonId: string, dateKey: string) => `${lessonId}__${dat
 type ScheduleContextValue = {
   subjects: Subject[];
   lessons: Lesson[];
+  completedByDate: Record<string, true>;
   addSubject: (subject: Omit<Subject, "id">) => void;
   removeSubject: (subjectId: string) => void;
   addLesson: (lesson: Omit<Lesson, "id">) => void;
   toggleLessonCompleted: (lessonId: string, dateKey: string) => void;
   isLessonCompleted: (lessonId: string, dateKey: string) => boolean;
   getWeekProgress: (weekOffset: number) => { completed: number; total: number };
+  replaceSchedule: (nextState: ScheduleState) => void;
 };
 
 const ScheduleContext = React.createContext<ScheduleContextValue | null>(null);
@@ -98,6 +100,62 @@ const createId = () => {
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
+const sanitizeSchedule = (input: ScheduleState): ScheduleState => {
+  const subjects = Array.isArray(input.subjects)
+    ? input.subjects
+        .filter(
+          (subject) =>
+            subject &&
+            typeof subject.id === "string" &&
+            typeof subject.name === "string" &&
+            typeof subject.color === "string"
+        )
+        .map((subject) => ({
+          id: subject.id,
+          name: subject.name,
+          color: subject.color,
+        }))
+    : [];
+
+  const subjectIds = new Set(subjects.map((subject) => subject.id));
+
+  const lessons = Array.isArray(input.lessons)
+    ? input.lessons
+        .filter(
+          (lesson) =>
+            lesson &&
+            typeof lesson.id === "string" &&
+            typeof lesson.subjectId === "string" &&
+            subjectIds.has(lesson.subjectId) &&
+            typeof lesson.dayIndex === "number" &&
+            lesson.dayIndex >= 0 &&
+            lesson.dayIndex <= 4 &&
+            typeof lesson.startMinutes === "number" &&
+            typeof lesson.endMinutes === "number" &&
+            lesson.endMinutes > lesson.startMinutes
+        )
+        .map((lesson) => ({
+          id: lesson.id,
+          subjectId: lesson.subjectId,
+          dayIndex: lesson.dayIndex,
+          startMinutes: lesson.startMinutes,
+          endMinutes: lesson.endMinutes,
+          notes: typeof lesson.notes === "string" ? lesson.notes : "",
+        }))
+    : [];
+
+  const completedByDate: Record<string, true> = {};
+  if (input.completedByDate && typeof input.completedByDate === "object") {
+    for (const key of Object.keys(input.completedByDate)) {
+      if (input.completedByDate[key] === true) {
+        completedByDate[key] = true;
+      }
+    }
+  }
+
+  return { subjects, lessons, completedByDate };
+};
+
 const loadSchedule = (): ScheduleState => {
   if (typeof window === "undefined") return seedData;
   const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -129,7 +187,7 @@ const loadSchedule = (): ScheduleState => {
       }
     }
 
-    return {
+    return sanitizeSchedule({
       subjects: parsed.subjects,
       lessons: parsed.lessons.map((lesson) => ({
         id: lesson.id,
@@ -140,7 +198,7 @@ const loadSchedule = (): ScheduleState => {
         notes: typeof lesson.notes === "string" ? lesson.notes : "",
       })),
       completedByDate,
-    };
+    });
   } catch {
     return seedData;
   }
@@ -223,15 +281,21 @@ export const ScheduleProvider = ({ children }: { children: React.ReactNode }) =>
     };
   };
 
+  const replaceSchedule = (nextState: ScheduleState) => {
+    setState(sanitizeSchedule(nextState));
+  };
+
   const value: ScheduleContextValue = {
     subjects: state.subjects,
     lessons: state.lessons,
+    completedByDate: state.completedByDate,
     addSubject,
     removeSubject,
     addLesson,
     toggleLessonCompleted,
     isLessonCompleted,
     getWeekProgress,
+    replaceSchedule,
   };
 
   return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;

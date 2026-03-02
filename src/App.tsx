@@ -1,15 +1,30 @@
 ﻿import * as React from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { Download, SlidersHorizontal, Upload } from "lucide-react";
 import { ScheduleProvider, useScheduleStore } from "./hooks/useScheduleStore";
 import { WeekCalendar } from "./components/WeekCalendar";
 import { AddLessonDialog } from "./components/AddLessonDialog";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { Input } from "./components/ui/input";
+import type { ScheduleState } from "./types/schedule";
 
 const CALENDAR_WINDOW_STORAGE_KEY = "unitrack-calendar-window-v1";
+const USERNAME_STORAGE_KEY = "unitrack-username-v1";
+const COURSE_NOTES_STORAGE_KEY = "unitrack-course-notes-v1";
 const MIN_VISIBLE_HOUR = 6;
 const MAX_VISIBLE_HOUR = 23;
+
+type CalendarWindow = { startHour: number; endHour: number };
+
+type BackupPayload = {
+  version: 1;
+  exportedAt: string;
+  username: string;
+  courseNotes: string;
+  calendarWindow: CalendarWindow | null;
+  schedule: ScheduleState;
+};
 
 const startOfWeekMonday = (date: Date) => {
   const copy = new Date(date);
@@ -39,13 +54,36 @@ const HOURS = Array.from({ length: MAX_VISIBLE_HOUR - MIN_VISIBLE_HOUR + 1 }, (_
   MIN_VISIBLE_HOUR + i
 );
 
+const isValidCalendarWindow = (value: unknown): value is CalendarWindow => {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as { startHour?: unknown; endHour?: unknown };
+  return (
+    typeof maybe.startHour === "number" &&
+    typeof maybe.endHour === "number" &&
+    maybe.startHour >= 0 &&
+    maybe.startHour <= 23 &&
+    maybe.endHour > maybe.startHour &&
+    maybe.endHour <= 24
+  );
+};
+
+const sanitizeFilename = (raw: string) => {
+  const cleaned = raw.trim().replace(/[^a-z0-9-_]+/gi, "_").replace(/^_+|_+$/g, "");
+  return cleaned || "unitrack-backup";
+};
+
 const AppContent = () => {
-  const { subjects, lessons, isLessonCompleted, getWeekProgress } = useScheduleStore();
+  const { subjects, lessons, isLessonCompleted, getWeekProgress, replaceSchedule, completedByDate } =
+    useScheduleStore();
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const [calendarWindow, setCalendarWindow] = React.useState<{ startHour: number; endHour: number } | null>(null);
+  const [calendarWindow, setCalendarWindow] = React.useState<CalendarWindow | null>(null);
+  const [username, setUsername] = React.useState("Studente");
+  const [courseNotes, setCourseNotes] = React.useState("");
   const [draftStartHour, setDraftStartHour] = React.useState("9");
   const [draftEndHour, setDraftEndHour] = React.useState("15");
+  const [draftUsername, setDraftUsername] = React.useState("Studente");
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const MIN_WEEK_OFFSET = -52;
   const MAX_WEEK_OFFSET = 52;
@@ -53,29 +91,44 @@ const AppContent = () => {
   const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
 
   React.useEffect(() => {
-    const raw = window.localStorage.getItem(CALENDAR_WINDOW_STORAGE_KEY);
-    if (!raw) return;
-
-    try {
-      const parsed = JSON.parse(raw) as { startHour?: number; endHour?: number };
-      if (
-        typeof parsed.startHour === "number" &&
-        typeof parsed.endHour === "number" &&
-        parsed.startHour >= 0 &&
-        parsed.startHour <= 23 &&
-        parsed.endHour > parsed.startHour &&
-        parsed.endHour <= 24
-      ) {
-        setCalendarWindow({ startHour: parsed.startHour, endHour: parsed.endHour });
+    const rawWindow = window.localStorage.getItem(CALENDAR_WINDOW_STORAGE_KEY);
+    if (rawWindow) {
+      try {
+        const parsed = JSON.parse(rawWindow) as unknown;
+        if (isValidCalendarWindow(parsed)) {
+          setCalendarWindow(parsed);
+        }
+      } catch {
+        // Keep default/auto mode.
       }
-    } catch {
-      // Ignore malformed settings and keep auto mode.
+    }
+
+    const storedUsername = window.localStorage.getItem(USERNAME_STORAGE_KEY);
+    if (storedUsername && storedUsername.trim()) {
+      setUsername(storedUsername);
+      setDraftUsername(storedUsername);
+    }
+
+    const storedCourseNotes = window.localStorage.getItem(COURSE_NOTES_STORAGE_KEY);
+    if (storedCourseNotes) {
+      setCourseNotes(storedCourseNotes);
     }
   }, []);
 
+  React.useEffect(() => {
+    window.localStorage.setItem(USERNAME_STORAGE_KEY, username);
+  }, [username]);
+
+  React.useEffect(() => {
+    window.localStorage.setItem(COURSE_NOTES_STORAGE_KEY, courseNotes);
+  }, [courseNotes]);
+
   const autoStartHour =
     lessons.length > 0
-      ? Math.max(MIN_VISIBLE_HOUR, Math.min(MAX_VISIBLE_HOUR, Math.floor(Math.min(...lessons.map((lesson) => lesson.startMinutes)) / 60)))
+      ? Math.max(
+          MIN_VISIBLE_HOUR,
+          Math.min(MAX_VISIBLE_HOUR, Math.floor(Math.min(...lessons.map((lesson) => lesson.startMinutes)) / 60))
+        )
       : 9;
   const autoEndHour =
     lessons.length > 0
@@ -92,15 +145,19 @@ const AppContent = () => {
     if (isSettingsOpen) {
       setDraftStartHour(String(visibleStartHour));
       setDraftEndHour(String(visibleEndHour));
+      setDraftUsername(username);
     }
-  }, [isSettingsOpen, visibleStartHour, visibleEndHour]);
+  }, [isSettingsOpen, visibleStartHour, visibleEndHour, username]);
 
-  const saveWindowSettings = () => {
+  const saveSettings = () => {
     const start = Number(draftStartHour);
     const end = Number(draftEndHour);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return;
     }
+
+    const trimmedUsername = draftUsername.trim() || "Studente";
+    setUsername(trimmedUsername);
 
     const nextWindow = { startHour: start, endHour: end };
     setCalendarWindow(nextWindow);
@@ -111,7 +168,73 @@ const AppContent = () => {
   const resetWindowSettings = () => {
     setCalendarWindow(null);
     window.localStorage.removeItem(CALENDAR_WINDOW_STORAGE_KEY);
-    setIsSettingsOpen(false);
+  };
+
+  const exportBackup = () => {
+    const payload: BackupPayload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      username,
+      courseNotes,
+      calendarWindow,
+      schedule: {
+        subjects,
+        lessons,
+        completedByDate,
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const datePart = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `${sanitizeFilename(username)}-${datePart}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const importBackupFromFile = async (file: File) => {
+    const rawText = await file.text();
+    const parsed = JSON.parse(rawText) as Partial<BackupPayload>;
+
+    if (!parsed || typeof parsed !== "object" || !parsed.schedule) {
+      throw new Error("Formato backup non valido");
+    }
+
+    replaceSchedule(parsed.schedule as ScheduleState);
+
+    if (typeof parsed.username === "string" && parsed.username.trim()) {
+      setUsername(parsed.username.trim());
+    }
+
+    if (typeof parsed.courseNotes === "string") {
+      setCourseNotes(parsed.courseNotes);
+    }
+
+    if (parsed.calendarWindow === null) {
+      setCalendarWindow(null);
+      window.localStorage.removeItem(CALENDAR_WINDOW_STORAGE_KEY);
+    } else if (isValidCalendarWindow(parsed.calendarWindow)) {
+      setCalendarWindow(parsed.calendarWindow);
+      window.localStorage.setItem(CALENDAR_WINDOW_STORAGE_KEY, JSON.stringify(parsed.calendarWindow));
+    }
+  };
+
+  const onImportInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+
+    try {
+      await importBackupFromFile(file);
+      setIsSettingsOpen(false);
+      window.alert("Backup importato correttamente.");
+    } catch {
+      window.alert("Impossibile importare il file selezionato.");
+    }
   };
 
   const weeklyStats = subjects
@@ -143,10 +266,10 @@ const AppContent = () => {
       <div className="mx-auto flex max-w-5xl flex-col gap-6">
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white/80 px-6 py-5 shadow-soft backdrop-blur">
           <div>
-            <div className="font-display text-2xl font-bold text-slate-900">UniTrack</div>
-            <div className="text-sm text-slate-500">
-              {completed}/{total} lezioni questa settimana
+            <div className="font-display text-2xl font-bold text-slate-900">
+              UniTrack - Welcome {username}
             </div>
+            <div className="text-sm text-slate-500">{completed}/{total} lezioni questa settimana</div>
             <div className="text-xs text-slate-400">
               Vista calendario: {formatHourLabel(visibleStartHour)} - {formatHourLabel(visibleEndHour)}
               {calendarWindow ? " (manuale)" : " (automatica)"}
@@ -155,7 +278,7 @@ const AppContent = () => {
           <div className="flex items-center gap-2">
             <Button variant="secondary" className="h-10" onClick={() => setIsSettingsOpen(true)}>
               <SlidersHorizontal className="mr-2 h-4 w-4" />
-              Finestra
+              Impostazioni
             </Button>
             <AddLessonDialog>
               <Button className="h-10">+ Aggiungi</Button>
@@ -166,9 +289,19 @@ const AppContent = () => {
         <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Finestra Calendario</DialogTitle>
+              <DialogTitle>Impostazioni</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-600">Nome utente</label>
+                <Input
+                  value={draftUsername}
+                  onChange={(event) => setDraftUsername(event.target.value)}
+                  placeholder="Es. Maria"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-600">Ora inizio visibile</label>
@@ -185,6 +318,7 @@ const AppContent = () => {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-600">Ora fine visibile</label>
                   <Select value={draftEndHour} onValueChange={setDraftEndHour}>
@@ -192,29 +326,51 @@ const AppContent = () => {
                       <SelectValue placeholder="Fine" />
                     </SelectTrigger>
                     <SelectContent>
-                      {Array.from({ length: MAX_VISIBLE_HOUR - MIN_VISIBLE_HOUR + 2 }, (_, i) => MIN_VISIBLE_HOUR + i)
-                        .map((hour) => (
-                          <SelectItem key={hour} value={String(hour)}>
-                            {formatHourLabel(hour)}
-                          </SelectItem>
-                        ))}
+                      {Array.from(
+                        { length: MAX_VISIBLE_HOUR - MIN_VISIBLE_HOUR + 2 },
+                        (_, i) => MIN_VISIBLE_HOUR + i
+                      ).map((hour) => (
+                        <SelectItem key={hour} value={String(hour)}>
+                          {formatHourLabel(hour)}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+
               {Number(draftEndHour) <= Number(draftStartHour) && (
                 <p className="text-xs text-rose-600">L'ora di fine deve essere successiva all'ora di inizio.</p>
               )}
-              <div className="flex items-center justify-between gap-2">
+
+              <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="ghost" onClick={resetWindowSettings}>
-                  Usa Automatico
+                  Usa finestra automatica
                 </Button>
+                <Button type="button" variant="secondary" onClick={exportBackup}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Scarica backup
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Carica backup
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={onImportInputChange}
+                />
+              </div>
+
+              <div className="flex justify-end">
                 <Button
                   type="button"
-                  onClick={saveWindowSettings}
+                  onClick={saveSettings}
                   disabled={Number(draftEndHour) <= Number(draftStartHour)}
                 >
-                  Salva
+                  Salva impostazioni
                 </Button>
               </div>
             </div>
@@ -257,6 +413,19 @@ const AppContent = () => {
           onPrevWeek={() => setWeekOffset((prev) => Math.max(MIN_WEEK_OFFSET, prev - 1))}
           onNextWeek={() => setWeekOffset((prev) => Math.min(MAX_WEEK_OFFSET, prev + 1))}
         />
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="mb-2 text-sm font-semibold text-slate-700">Note generali del corso</div>
+          <p className="mb-3 text-xs text-slate-500">
+            Scrivi qui informazioni utili su esame, criteri di valutazione e consigli del docente.
+          </p>
+          <textarea
+            value={courseNotes}
+            onChange={(event) => setCourseNotes(event.target.value)}
+            placeholder="Es. Esame scritto + orale, minimo 18/30, bonus frequenza..."
+            className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
+          />
+        </section>
       </div>
     </div>
   );
