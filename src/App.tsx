@@ -426,6 +426,26 @@ const AppContent = () => {
             className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
           />
         </section>
+
+        <footer className="pb-2 pt-1 text-center text-xs text-slate-500">
+          <a
+            href="https://github.com/MarianoAkaMery/MyUniversityPlan-by-Some-LLMS"
+            target="_blank"
+            rel="noreferrer"
+            className="underline-offset-2 hover:underline"
+          >
+            GitHub Repo
+          </a>
+          {"  |  "}
+          <a
+            href="https://www.linkedin.com/in/salvatore-mariano-librici-0aaab3202/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline-offset-2 hover:underline"
+          >
+            LinkedIn
+          </a>
+        </footer>
       </div>
     </div>
   );
