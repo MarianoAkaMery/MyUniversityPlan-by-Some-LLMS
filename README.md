@@ -12,7 +12,8 @@ It is designed for fast day-to-day usage: add subjects, schedule lessons, track 
 - Subject management (name + color)
 - Add lesson flow with subject/day/time/notes
 - Weekly stats by subject
-- General course notes section (exam info, grading criteria, etc.)
+- General course notes with mini markdown editor (`bold`, `italic`, bullets, links)
+- Notes view switch (`Editor` / `Formatted`)
 - Configurable visible calendar time window
 - User greeting in header (`Welcome <Name>`)
 - Full backup/export and restore/import
@@ -57,6 +58,8 @@ From `Settings` you can:
 
 - **Download backup** -> exports a full JSON snapshot
 - **Upload backup** -> restores all app data
+
+The backup includes schedule data, completion history, username, calendar window, and general course notes.
 
 The exported filename is generated from the username, for example:
 

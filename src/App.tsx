@@ -1,5 +1,5 @@
 ﻿import * as React from "react";
-import { Download, SlidersHorizontal, Upload } from "lucide-react";
+import { Download, Eye, SlidersHorizontal, Upload } from "lucide-react";
 import { ScheduleProvider, useScheduleStore } from "./hooks/useScheduleStore";
 import { WeekCalendar } from "./components/WeekCalendar";
 import { AddLessonDialog } from "./components/AddLessonDialog";
@@ -73,6 +73,88 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
+const parseInlineMarkdown = (text: string): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("**") && token.endsWith("**")) {
+      nodes.push(<strong key={`${match.index}-b`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("*") && token.endsWith("*")) {
+      nodes.push(<em key={`${match.index}-i`}>{token.slice(1, -1)}</em>);
+    } else {
+      const linkMatch = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
+      if (linkMatch) {
+        nodes.push(
+          <a
+            key={`${match.index}-l`}
+            href={linkMatch[2]}
+            target="_blank"
+            rel="noreferrer"
+            className="underline text-sky-700"
+          >
+            {linkMatch[1]}
+          </a>
+        );
+      } else {
+        nodes.push(token);
+      }
+    }
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+};
+
+const renderMarkdownPreview = (markdown: string) => {
+  const lines = markdown.split("\n");
+  const blocks: React.ReactNode[] = [];
+  let listItems: string[] = [];
+
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push(
+      <ul key={`ul-${blocks.length}`} className="list-disc space-y-1 pl-5">
+        {listItems.map((item, index) => (
+          <li key={`${item}-${index}`}>{parseInlineMarkdown(item)}</li>
+        ))}
+      </ul>
+    );
+    listItems = [];
+  };
+
+  lines.forEach((line, index) => {
+    if (line.startsWith("- ")) {
+      listItems.push(line.slice(2));
+      return;
+    }
+    flushList();
+    if (line.trim() === "") {
+      blocks.push(<div key={`sp-${index}`} className="h-2" />);
+    } else {
+      blocks.push(
+        <p key={`p-${index}`} className="leading-relaxed">
+          {parseInlineMarkdown(line)}
+        </p>
+      );
+    }
+  });
+  flushList();
+
+  return blocks;
+};
+
 const AppContent = () => {
   const { subjects, lessons, isLessonCompleted, getWeekProgress, replaceSchedule, completedByDate } =
     useScheduleStore();
@@ -84,6 +166,7 @@ const AppContent = () => {
   const [draftStartHour, setDraftStartHour] = React.useState("9");
   const [draftEndHour, setDraftEndHour] = React.useState("15");
   const [draftUsername, setDraftUsername] = React.useState("Studente");
+  const [notesViewMode, setNotesViewMode] = React.useState<"editor" | "formatted">("editor");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -493,14 +576,33 @@ const AppContent = () => {
             <Button type="button" variant="secondary" className="h-8 px-3" onClick={addLink}>
               Link
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 px-3"
+              onClick={() => setNotesViewMode((prev) => (prev === "editor" ? "formatted" : "editor"))}
+            >
+              <Eye className="mr-2 h-4 w-4" />
+              {notesViewMode === "editor" ? "Formattato" : "Editor"}
+            </Button>
           </div>
-          <textarea
-            ref={notesTextareaRef}
-            value={courseNotes}
-            onChange={(event) => setCourseNotes(event.target.value)}
-            placeholder="Es. **Written + oral exam**, minimum 18/30, - attendance bonus"
-            className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
-          />
+          {notesViewMode === "editor" ? (
+            <textarea
+              ref={notesTextareaRef}
+              value={courseNotes}
+              onChange={(event) => setCourseNotes(event.target.value)}
+              placeholder="Es. **Written + oral exam**, minimum 18/30, - attendance bonus"
+              className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            />
+          ) : (
+            <div className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+              {courseNotes.trim() ? (
+                <div className="space-y-1">{renderMarkdownPreview(courseNotes)}</div>
+              ) : (
+                <p className="text-slate-400">No formatted content yet.</p>
+              )}
+            </div>
+          )}
           <p className="mt-2 text-xs text-slate-400">
             Formatting shortcuts: <span className="font-mono">**bold**</span>,{" "}
             <span className="font-mono">*italic*</span>, <span className="font-mono">- list item</span>,{" "}
