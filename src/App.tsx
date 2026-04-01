@@ -12,10 +12,12 @@ import type { ScheduleState } from "./types/schedule";
 const CALENDAR_WINDOW_STORAGE_KEY = "unitrack-calendar-window-v1";
 const USERNAME_STORAGE_KEY = "unitrack-username-v1";
 const COURSE_NOTES_STORAGE_KEY = "unitrack-course-notes-v1";
+const CUMULATIVE_WINDOW_STORAGE_KEY = "unitrack-cumulative-window-v1";
 const MIN_VISIBLE_HOUR = 6;
 const MAX_VISIBLE_HOUR = 23;
 
 type CalendarWindow = { startHour: number; endHour: number };
+type CumulativeWindow = { startDate: string; endDate: string };
 
 type BackupPayload = {
   version: 1;
@@ -24,6 +26,7 @@ type BackupPayload = {
   courseNotes: string;
   generalCourseNotes: string;
   calendarWindow: CalendarWindow | null;
+  cumulativeWindow: CumulativeWindow | null;
   schedule: ScheduleState;
 };
 
@@ -73,21 +76,6 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
-const startOfSemester = (date: Date) => {
-  const year = date.getFullYear();
-  const month = date.getMonth();
-
-  if (month >= 1 && month <= 6) {
-    return new Date(year, 1, 1);
-  }
-
-  if (month >= 7) {
-    return new Date(year, 8, 1);
-  }
-
-  return new Date(year - 1, 8, 1);
-};
-
 const countWeeklyOccurrencesInRange = (dayIndex: number, start: Date, end: Date) => {
   const startDate = new Date(start);
   const endDate = new Date(end);
@@ -105,6 +93,23 @@ const countWeeklyOccurrencesInRange = (dayIndex: number, start: Date, end: Date)
 
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
   return Math.floor((endDate.getTime() - firstOccurrence.getTime()) / MS_PER_WEEK) + 1;
+};
+
+const fromDateKey = (dateKey: string) => {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+};
+
+const isValidCumulativeWindow = (value: unknown): value is CumulativeWindow => {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as { startDate?: unknown; endDate?: unknown };
+  return (
+    typeof maybe.startDate === "string" &&
+    typeof maybe.endDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(maybe.startDate) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(maybe.endDate) &&
+    maybe.startDate <= maybe.endDate
+  );
 };
 
 const parseInlineMarkdown = (text: string): React.ReactNode[] => {
@@ -196,11 +201,14 @@ const AppContent = () => {
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [statsMode, setStatsMode] = React.useState<"week" | "semester">("week");
   const [calendarWindow, setCalendarWindow] = React.useState<CalendarWindow | null>(null);
+  const [cumulativeWindow, setCumulativeWindow] = React.useState<CumulativeWindow | null>(null);
   const [username, setUsername] = React.useState("Studente");
   const [courseNotes, setCourseNotes] = React.useState("");
   const [draftStartHour, setDraftStartHour] = React.useState("9");
   const [draftEndHour, setDraftEndHour] = React.useState("15");
   const [draftUsername, setDraftUsername] = React.useState("Studente");
+  const [draftCumulativeStartDate, setDraftCumulativeStartDate] = React.useState("");
+  const [draftCumulativeEndDate, setDraftCumulativeEndDate] = React.useState("");
   const [notesViewMode, setNotesViewMode] = React.useState<"editor" | "formatted">("formatted");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -233,6 +241,18 @@ const AppContent = () => {
     const storedCourseNotes = window.localStorage.getItem(COURSE_NOTES_STORAGE_KEY);
     if (storedCourseNotes) {
       setCourseNotes(storedCourseNotes);
+    }
+
+    const rawCumulativeWindow = window.localStorage.getItem(CUMULATIVE_WINDOW_STORAGE_KEY);
+    if (rawCumulativeWindow) {
+      try {
+        const parsed = JSON.parse(rawCumulativeWindow) as unknown;
+        if (isValidCumulativeWindow(parsed)) {
+          setCumulativeWindow(parsed);
+        }
+      } catch {
+        // Keep default range.
+      }
     }
   }, []);
 
@@ -267,13 +287,24 @@ const AppContent = () => {
       setDraftStartHour(String(visibleStartHour));
       setDraftEndHour(String(visibleEndHour));
       setDraftUsername(username);
+      setDraftCumulativeStartDate(cumulativeWindow?.startDate ?? "");
+      setDraftCumulativeEndDate(cumulativeWindow?.endDate ?? "");
     }
-  }, [isSettingsOpen, visibleStartHour, visibleEndHour, username]);
+  }, [isSettingsOpen, visibleStartHour, visibleEndHour, username, cumulativeWindow]);
 
   const saveSettings = () => {
     const start = Number(draftStartHour);
     const end = Number(draftEndHour);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    const hasCompleteCumulativeWindow = Boolean(draftCumulativeStartDate && draftCumulativeEndDate);
+    const hasPartialCumulativeWindow = Boolean(draftCumulativeStartDate || draftCumulativeEndDate);
+
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      end <= start ||
+      hasPartialCumulativeWindow !== hasCompleteCumulativeWindow ||
+      (hasCompleteCumulativeWindow && draftCumulativeStartDate > draftCumulativeEndDate)
+    ) {
       return;
     }
 
@@ -283,12 +314,32 @@ const AppContent = () => {
     const nextWindow = { startHour: start, endHour: end };
     setCalendarWindow(nextWindow);
     window.localStorage.setItem(CALENDAR_WINDOW_STORAGE_KEY, JSON.stringify(nextWindow));
+
+    if (hasCompleteCumulativeWindow) {
+      const nextCumulativeWindow = {
+        startDate: draftCumulativeStartDate,
+        endDate: draftCumulativeEndDate,
+      };
+      setCumulativeWindow(nextCumulativeWindow);
+      window.localStorage.setItem(CUMULATIVE_WINDOW_STORAGE_KEY, JSON.stringify(nextCumulativeWindow));
+    } else {
+      setCumulativeWindow(null);
+      window.localStorage.removeItem(CUMULATIVE_WINDOW_STORAGE_KEY);
+    }
+
     setIsSettingsOpen(false);
   };
 
   const resetWindowSettings = () => {
     setCalendarWindow(null);
     window.localStorage.removeItem(CALENDAR_WINDOW_STORAGE_KEY);
+  };
+
+  const resetCumulativeWindowSettings = () => {
+    setCumulativeWindow(null);
+    setDraftCumulativeStartDate("");
+    setDraftCumulativeEndDate("");
+    window.localStorage.removeItem(CUMULATIVE_WINDOW_STORAGE_KEY);
   };
 
   const exportBackup = () => {
@@ -299,6 +350,7 @@ const AppContent = () => {
       courseNotes,
       generalCourseNotes: courseNotes,
       calendarWindow,
+      cumulativeWindow,
       schedule: {
         subjects,
         lessons,
@@ -348,6 +400,14 @@ const AppContent = () => {
     } else if (isValidCalendarWindow(parsed.calendarWindow)) {
       setCalendarWindow(parsed.calendarWindow);
       window.localStorage.setItem(CALENDAR_WINDOW_STORAGE_KEY, JSON.stringify(parsed.calendarWindow));
+    }
+
+    if (parsed.cumulativeWindow === null) {
+      setCumulativeWindow(null);
+      window.localStorage.removeItem(CUMULATIVE_WINDOW_STORAGE_KEY);
+    } else if (isValidCumulativeWindow(parsed.cumulativeWindow)) {
+      setCumulativeWindow(parsed.cumulativeWindow);
+      window.localStorage.setItem(CUMULATIVE_WINDOW_STORAGE_KEY, JSON.stringify(parsed.cumulativeWindow));
     }
   };
 
@@ -418,9 +478,15 @@ const AppContent = () => {
   };
 
   const completedOccurrences = Object.keys(completedByDate);
-  const semesterStart = startOfSemester(weekEnd);
-  const semesterStartKey = toDateKey(semesterStart);
-  const semesterEndKey = toDateKey(weekEnd);
+  const cumulativeStartKey = cumulativeWindow?.startDate ?? toDateKey(weekStart);
+  const cumulativeEndKey = cumulativeWindow?.endDate ?? toDateKey(weekEnd);
+  const cumulativeStartDate = fromDateKey(cumulativeStartKey);
+  const cumulativeEndDate = fromDateKey(cumulativeEndKey);
+  const hasInvalidDraftCumulativeWindow =
+    Boolean(draftCumulativeStartDate || draftCumulativeEndDate) &&
+    (!draftCumulativeStartDate ||
+      !draftCumulativeEndDate ||
+      draftCumulativeStartDate > draftCumulativeEndDate);
 
   const subjectStats = subjects
     .map((subject) => {
@@ -430,26 +496,26 @@ const AppContent = () => {
         const dateKey = toDateKey(addDays(weekStart, lesson.dayIndex));
         return count + (isLessonCompleted(lesson.id, dateKey) ? 1 : 0);
       }, 0);
-      const semesterTotalLessons = subjectLessons.reduce(
-        (count, lesson) => count + countWeeklyOccurrencesInRange(lesson.dayIndex, semesterStart, weekEnd),
+      const cumulativeTotalLessons = subjectLessons.reduce(
+        (count, lesson) => count + countWeeklyOccurrencesInRange(lesson.dayIndex, cumulativeStartDate, cumulativeEndDate),
         0
       );
-      const semesterCompletedLessons = subjectLessons.reduce(
+      const cumulativeCompletedLessons = subjectLessons.reduce(
         (count, lesson) =>
           count +
           completedOccurrences.filter((entry) => {
             const [entryLessonId, entryDateKey] = entry.split("__");
             return (
               entryLessonId === lesson.id &&
-              entryDateKey >= semesterStartKey &&
-              entryDateKey <= semesterEndKey
+              entryDateKey >= cumulativeStartKey &&
+              entryDateKey <= cumulativeEndKey
             );
           }).length,
         0
       );
 
-      const totalLessons = statsMode === "week" ? weekTotalLessons : semesterTotalLessons;
-      const completedLessons = statsMode === "week" ? weekCompletedLessons : semesterCompletedLessons;
+      const totalLessons = statsMode === "week" ? weekTotalLessons : cumulativeTotalLessons;
+      const completedLessons = statsMode === "week" ? weekCompletedLessons : cumulativeCompletedLessons;
 
       return {
         subjectId: subject.id,
@@ -549,6 +615,43 @@ const AppContent = () => {
                 <p className="text-xs text-rose-600">L'ora di fine deve essere successiva all'ora di inizio.</p>
               )}
 
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div>
+                  <div className="text-sm font-medium text-slate-700">Finestra stats cumulative</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Imposta manualmente da quando a quando deve contare la vista cumulativa.
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600">Data inizio</label>
+                    <Input
+                      type="date"
+                      value={draftCumulativeStartDate}
+                      onChange={(event) => setDraftCumulativeStartDate(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600">Data fine</label>
+                    <Input
+                      type="date"
+                      value={draftCumulativeEndDate}
+                      onChange={(event) => setDraftCumulativeEndDate(event.target.value)}
+                    />
+                  </div>
+                </div>
+                {hasInvalidDraftCumulativeWindow && (
+                  <p className="text-xs text-rose-600">
+                    Inserisci entrambe le date e assicurati che la data finale sia successiva o uguale a quella iniziale.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="ghost" onClick={resetCumulativeWindowSettings}>
+                    Reset finestra cumulativa
+                  </Button>
+                </div>
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="ghost" onClick={resetWindowSettings}>
                   Usa finestra automatica
@@ -574,7 +677,7 @@ const AppContent = () => {
                 <Button
                   type="button"
                   onClick={saveSettings}
-                  disabled={Number(draftEndHour) <= Number(draftStartHour)}
+                  disabled={Number(draftEndHour) <= Number(draftStartHour) || hasInvalidDraftCumulativeWindow}
                 >
                   Salva impostazioni
                 </Button>
@@ -590,7 +693,7 @@ const AppContent = () => {
               <div className="mt-1 text-xs text-slate-500">
                 {statsMode === "week"
                   ? "Panoramica delle lezioni ancora da seguire in questa settimana."
-                  : `Conteggio cumulativo dal ${semesterStart.toLocaleDateString("it-IT")} fino a questa settimana.`}
+                  : `Conteggio cumulativo dal ${cumulativeStartDate.toLocaleDateString("it-IT")} al ${cumulativeEndDate.toLocaleDateString("it-IT")}.`}
               </div>
             </div>
             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
@@ -610,7 +713,7 @@ const AppContent = () => {
                   statsMode === "semester" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
                 }`}
               >
-                Semestre
+                Cumulativa
               </button>
             </div>
           </div>
