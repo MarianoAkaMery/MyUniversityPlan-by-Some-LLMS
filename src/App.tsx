@@ -100,6 +100,8 @@ const fromDateKey = (dateKey: string) => {
   return new Date(year, (month || 1) - 1, day || 1);
 };
 
+const minDate = (a: Date, b: Date) => (a.getTime() <= b.getTime() ? a : b);
+
 const isValidCumulativeWindow = (value: unknown): value is CumulativeWindow => {
   if (!value || typeof value !== "object") return false;
   const maybe = value as { startDate?: unknown; endDate?: unknown };
@@ -218,6 +220,8 @@ const AppContent = () => {
   const { completed, total } = getWeekProgress(weekOffset);
   const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
   const weekEnd = addDays(weekStart, 4);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   React.useEffect(() => {
     const rawWindow = window.localStorage.getItem(CALENDAR_WINDOW_STORAGE_KEY);
@@ -482,6 +486,8 @@ const AppContent = () => {
   const cumulativeEndKey = cumulativeWindow?.endDate ?? toDateKey(weekEnd);
   const cumulativeStartDate = fromDateKey(cumulativeStartKey);
   const cumulativeEndDate = fromDateKey(cumulativeEndKey);
+  const cumulativeCheckpointDate = minDate(today, cumulativeEndDate);
+  const cumulativeCheckpointKey = toDateKey(cumulativeCheckpointDate);
   const hasInvalidDraftCumulativeWindow =
     Boolean(draftCumulativeStartDate || draftCumulativeEndDate) &&
     (!draftCumulativeStartDate ||
@@ -508,14 +514,16 @@ const AppContent = () => {
             return (
               entryLessonId === lesson.id &&
               entryDateKey >= cumulativeStartKey &&
-              entryDateKey <= cumulativeEndKey
+              entryDateKey <= cumulativeCheckpointKey
             );
           }).length,
         0
       );
+      const cumulativeRemainingLessons = Math.max(cumulativeTotalLessons - cumulativeCompletedLessons, 0);
 
       const totalLessons = statsMode === "week" ? weekTotalLessons : cumulativeTotalLessons;
       const completedLessons = statsMode === "week" ? weekCompletedLessons : cumulativeCompletedLessons;
+      const remainingLessons = statsMode === "week" ? weekTotalLessons - weekCompletedLessons : cumulativeRemainingLessons;
 
       return {
         subjectId: subject.id,
@@ -524,7 +532,7 @@ const AppContent = () => {
         weekTotalLessons,
         totalLessons,
         completedLessons,
-        remainingLessons: totalLessons - completedLessons,
+        remainingLessons,
       };
     })
     .filter((item) => item.totalLessons > 0)
@@ -693,7 +701,7 @@ const AppContent = () => {
               <div className="mt-1 text-xs text-slate-500">
                 {statsMode === "week"
                   ? "Panoramica delle lezioni ancora da seguire in questa settimana."
-                  : `Conteggio cumulativo dal ${cumulativeStartDate.toLocaleDateString("it-IT")} al ${cumulativeEndDate.toLocaleDateString("it-IT")}.`}
+                  : `Finestra cumulativa dal ${cumulativeStartDate.toLocaleDateString("it-IT")} al ${cumulativeEndDate.toLocaleDateString("it-IT")} aggiornata a oggi (${cumulativeCheckpointDate.toLocaleDateString("it-IT")}).`}
               </div>
             </div>
             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
@@ -731,12 +739,25 @@ const AppContent = () => {
                     />
                     <span className="text-sm font-semibold text-slate-800">{stat.subjectName}</span>
                   </div>
-                  <div className="text-sm text-slate-600">
-                    Mancano {stat.remainingLessons}/{stat.totalLessons} lezioni da seguire
-                  </div>
-                  <div className="mt-1 text-xs text-slate-400">
-                    Completate: {stat.completedLessons}/{stat.totalLessons}
-                  </div>
+                  {statsMode === "week" ? (
+                    <>
+                      <div className="text-sm text-slate-600">
+                        Mancano {stat.remainingLessons}/{stat.totalLessons} lezioni da seguire
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        Completate: {stat.completedLessons}/{stat.totalLessons}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-sm font-medium text-slate-700">
+                        Mancano {stat.remainingLessons} lezioni
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        Fatte fino a oggi: {stat.completedLessons}
+                      </div>
+                    </>
+                  )}
                   {statsMode === "semester" && (
                     <div className="mt-2 text-[11px] text-slate-400">
                       Lezioni settimanali previste: {stat.weekTotalLessons}
