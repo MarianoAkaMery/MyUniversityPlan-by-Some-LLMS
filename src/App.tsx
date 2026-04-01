@@ -17,7 +17,7 @@ const MIN_VISIBLE_HOUR = 6;
 const MAX_VISIBLE_HOUR = 23;
 
 type CalendarWindow = { startHour: number; endHour: number };
-type CumulativeWindow = { startDate: string; endDate: string };
+type CumulativeWindow = { startDate: string };
 
 type BackupPayload = {
   version: 1;
@@ -100,18 +100,10 @@ const fromDateKey = (dateKey: string) => {
   return new Date(year, (month || 1) - 1, day || 1);
 };
 
-const minDate = (a: Date, b: Date) => (a.getTime() <= b.getTime() ? a : b);
-
 const isValidCumulativeWindow = (value: unknown): value is CumulativeWindow => {
   if (!value || typeof value !== "object") return false;
-  const maybe = value as { startDate?: unknown; endDate?: unknown };
-  return (
-    typeof maybe.startDate === "string" &&
-    typeof maybe.endDate === "string" &&
-    /^\d{4}-\d{2}-\d{2}$/.test(maybe.startDate) &&
-    /^\d{4}-\d{2}-\d{2}$/.test(maybe.endDate) &&
-    maybe.startDate <= maybe.endDate
-  );
+  const maybe = value as { startDate?: unknown };
+  return typeof maybe.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(maybe.startDate);
 };
 
 const parseInlineMarkdown = (text: string): React.ReactNode[] => {
@@ -210,7 +202,6 @@ const AppContent = () => {
   const [draftEndHour, setDraftEndHour] = React.useState("15");
   const [draftUsername, setDraftUsername] = React.useState("Studente");
   const [draftCumulativeStartDate, setDraftCumulativeStartDate] = React.useState("");
-  const [draftCumulativeEndDate, setDraftCumulativeEndDate] = React.useState("");
   const [notesViewMode, setNotesViewMode] = React.useState<"editor" | "formatted">("formatted");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -219,7 +210,6 @@ const AppContent = () => {
   const MAX_WEEK_OFFSET = 52;
   const { completed, total } = getWeekProgress(weekOffset);
   const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
-  const weekEnd = addDays(weekStart, 4);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -292,23 +282,14 @@ const AppContent = () => {
       setDraftEndHour(String(visibleEndHour));
       setDraftUsername(username);
       setDraftCumulativeStartDate(cumulativeWindow?.startDate ?? "");
-      setDraftCumulativeEndDate(cumulativeWindow?.endDate ?? "");
     }
   }, [isSettingsOpen, visibleStartHour, visibleEndHour, username, cumulativeWindow]);
 
   const saveSettings = () => {
     const start = Number(draftStartHour);
     const end = Number(draftEndHour);
-    const hasCompleteCumulativeWindow = Boolean(draftCumulativeStartDate && draftCumulativeEndDate);
-    const hasPartialCumulativeWindow = Boolean(draftCumulativeStartDate || draftCumulativeEndDate);
 
-    if (
-      !Number.isFinite(start) ||
-      !Number.isFinite(end) ||
-      end <= start ||
-      hasPartialCumulativeWindow !== hasCompleteCumulativeWindow ||
-      (hasCompleteCumulativeWindow && draftCumulativeStartDate > draftCumulativeEndDate)
-    ) {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return;
     }
 
@@ -319,10 +300,9 @@ const AppContent = () => {
     setCalendarWindow(nextWindow);
     window.localStorage.setItem(CALENDAR_WINDOW_STORAGE_KEY, JSON.stringify(nextWindow));
 
-    if (hasCompleteCumulativeWindow) {
+    if (draftCumulativeStartDate) {
       const nextCumulativeWindow = {
         startDate: draftCumulativeStartDate,
-        endDate: draftCumulativeEndDate,
       };
       setCumulativeWindow(nextCumulativeWindow);
       window.localStorage.setItem(CUMULATIVE_WINDOW_STORAGE_KEY, JSON.stringify(nextCumulativeWindow));
@@ -342,7 +322,6 @@ const AppContent = () => {
   const resetCumulativeWindowSettings = () => {
     setCumulativeWindow(null);
     setDraftCumulativeStartDate("");
-    setDraftCumulativeEndDate("");
     window.localStorage.removeItem(CUMULATIVE_WINDOW_STORAGE_KEY);
   };
 
@@ -483,16 +462,9 @@ const AppContent = () => {
 
   const completedOccurrences = Object.keys(completedByDate);
   const cumulativeStartKey = cumulativeWindow?.startDate ?? toDateKey(weekStart);
-  const cumulativeEndKey = cumulativeWindow?.endDate ?? toDateKey(weekEnd);
   const cumulativeStartDate = fromDateKey(cumulativeStartKey);
-  const cumulativeEndDate = fromDateKey(cumulativeEndKey);
-  const cumulativeCheckpointDate = minDate(today, cumulativeEndDate);
+  const cumulativeCheckpointDate = today;
   const cumulativeCheckpointKey = toDateKey(cumulativeCheckpointDate);
-  const hasInvalidDraftCumulativeWindow =
-    Boolean(draftCumulativeStartDate || draftCumulativeEndDate) &&
-    (!draftCumulativeStartDate ||
-      !draftCumulativeEndDate ||
-      draftCumulativeStartDate > draftCumulativeEndDate);
 
   const subjectStats = subjects
     .map((subject) => {
@@ -502,8 +474,9 @@ const AppContent = () => {
         const dateKey = toDateKey(addDays(weekStart, lesson.dayIndex));
         return count + (isLessonCompleted(lesson.id, dateKey) ? 1 : 0);
       }, 0);
-      const cumulativeTotalLessons = subjectLessons.reduce(
-        (count, lesson) => count + countWeeklyOccurrencesInRange(lesson.dayIndex, cumulativeStartDate, cumulativeEndDate),
+      const cumulativeScheduledToDate = subjectLessons.reduce(
+        (count, lesson) =>
+          count + countWeeklyOccurrencesInRange(lesson.dayIndex, cumulativeStartDate, cumulativeCheckpointDate),
         0
       );
       const cumulativeCompletedLessons = subjectLessons.reduce(
@@ -519,9 +492,9 @@ const AppContent = () => {
           }).length,
         0
       );
-      const cumulativeRemainingLessons = Math.max(cumulativeTotalLessons - cumulativeCompletedLessons, 0);
+      const cumulativeRemainingLessons = Math.max(cumulativeScheduledToDate - cumulativeCompletedLessons, 0);
 
-      const totalLessons = statsMode === "week" ? weekTotalLessons : cumulativeTotalLessons;
+      const totalLessons = statsMode === "week" ? weekTotalLessons : cumulativeScheduledToDate;
       const completedLessons = statsMode === "week" ? weekCompletedLessons : cumulativeCompletedLessons;
       const remainingLessons = statsMode === "week" ? weekTotalLessons - weekCompletedLessons : cumulativeRemainingLessons;
 
@@ -624,35 +597,20 @@ const AppContent = () => {
               )}
 
               <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                <div>
+                  <div>
                   <div className="text-sm font-medium text-slate-700">Finestra stats cumulative</div>
                   <div className="mt-1 text-xs text-slate-500">
-                    Imposta manualmente da quando a quando deve contare la vista cumulativa.
+                    Imposta da quando deve partire il conteggio cumulativo. La fine e sempre oggi.
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-600">Data inizio</label>
-                    <Input
-                      type="date"
-                      value={draftCumulativeStartDate}
-                      onChange={(event) => setDraftCumulativeStartDate(event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-600">Data fine</label>
-                    <Input
-                      type="date"
-                      value={draftCumulativeEndDate}
-                      onChange={(event) => setDraftCumulativeEndDate(event.target.value)}
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-600">Data inizio</label>
+                  <Input
+                    type="date"
+                    value={draftCumulativeStartDate}
+                    onChange={(event) => setDraftCumulativeStartDate(event.target.value)}
+                  />
                 </div>
-                {hasInvalidDraftCumulativeWindow && (
-                  <p className="text-xs text-rose-600">
-                    Inserisci entrambe le date e assicurati che la data finale sia successiva o uguale a quella iniziale.
-                  </p>
-                )}
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="button" variant="ghost" onClick={resetCumulativeWindowSettings}>
                     Reset finestra cumulativa
@@ -685,7 +643,7 @@ const AppContent = () => {
                 <Button
                   type="button"
                   onClick={saveSettings}
-                  disabled={Number(draftEndHour) <= Number(draftStartHour) || hasInvalidDraftCumulativeWindow}
+                  disabled={Number(draftEndHour) <= Number(draftStartHour)}
                 >
                   Salva impostazioni
                 </Button>
@@ -701,7 +659,7 @@ const AppContent = () => {
               <div className="mt-1 text-xs text-slate-500">
                 {statsMode === "week"
                   ? "Panoramica delle lezioni ancora da seguire in questa settimana."
-                  : `Finestra cumulativa dal ${cumulativeStartDate.toLocaleDateString("it-IT")} al ${cumulativeEndDate.toLocaleDateString("it-IT")} aggiornata a oggi (${cumulativeCheckpointDate.toLocaleDateString("it-IT")}).`}
+                  : `Conteggio cumulativo dal ${cumulativeStartDate.toLocaleDateString("it-IT")} a oggi (${cumulativeCheckpointDate.toLocaleDateString("it-IT")}).`}
               </div>
             </div>
             <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
@@ -754,13 +712,13 @@ const AppContent = () => {
                         Mancano {stat.remainingLessons} lezioni
                       </div>
                       <div className="mt-1 text-xs text-slate-400">
-                        Fatte fino a oggi: {stat.completedLessons}
+                        Fatte fino a oggi: {stat.completedLessons}/{stat.totalLessons}
                       </div>
                     </>
                   )}
                   {statsMode === "semester" && (
                     <div className="mt-2 text-[11px] text-slate-400">
-                      Lezioni settimanali previste: {stat.weekTotalLessons}
+                      Lezioni previste fino a oggi: {stat.totalLessons}
                     </div>
                   )}
                 </div>
