@@ -73,6 +73,40 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
+const startOfSemester = (date: Date) => {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+
+  if (month >= 1 && month <= 6) {
+    return new Date(year, 1, 1);
+  }
+
+  if (month >= 7) {
+    return new Date(year, 8, 1);
+  }
+
+  return new Date(year - 1, 8, 1);
+};
+
+const countWeeklyOccurrencesInRange = (dayIndex: number, start: Date, end: Date) => {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  startDate.setHours(0, 0, 0, 0);
+  endDate.setHours(0, 0, 0, 0);
+
+  if (endDate < startDate) return 0;
+
+  const targetDay = dayIndex + 1;
+  const firstOccurrence = new Date(startDate);
+  const delta = (targetDay - firstOccurrence.getDay() + 7) % 7;
+  firstOccurrence.setDate(firstOccurrence.getDate() + delta);
+
+  if (firstOccurrence > endDate) return 0;
+
+  const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+  return Math.floor((endDate.getTime() - firstOccurrence.getTime()) / MS_PER_WEEK) + 1;
+};
+
 const parseInlineMarkdown = (text: string): React.ReactNode[] => {
   const nodes: React.ReactNode[] = [];
   const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
@@ -160,6 +194,7 @@ const AppContent = () => {
     useScheduleStore();
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [statsMode, setStatsMode] = React.useState<"week" | "semester">("week");
   const [calendarWindow, setCalendarWindow] = React.useState<CalendarWindow | null>(null);
   const [username, setUsername] = React.useState("Studente");
   const [courseNotes, setCourseNotes] = React.useState("");
@@ -174,6 +209,7 @@ const AppContent = () => {
   const MAX_WEEK_OFFSET = 52;
   const { completed, total } = getWeekProgress(weekOffset);
   const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
+  const weekEnd = addDays(weekStart, 4);
 
   React.useEffect(() => {
     const rawWindow = window.localStorage.getItem(CALENDAR_WINDOW_STORAGE_KEY);
@@ -381,19 +417,45 @@ const AppContent = () => {
     updateCourseNotes(next, start, start + markdownLink.length);
   };
 
-  const weeklyStats = subjects
+  const completedOccurrences = Object.keys(completedByDate);
+  const semesterStart = startOfSemester(weekEnd);
+  const semesterStartKey = toDateKey(semesterStart);
+  const semesterEndKey = toDateKey(weekEnd);
+
+  const subjectStats = subjects
     .map((subject) => {
       const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id);
-      const totalLessons = subjectLessons.length;
-      const completedLessons = subjectLessons.reduce((count, lesson) => {
+      const weekTotalLessons = subjectLessons.length;
+      const weekCompletedLessons = subjectLessons.reduce((count, lesson) => {
         const dateKey = toDateKey(addDays(weekStart, lesson.dayIndex));
         return count + (isLessonCompleted(lesson.id, dateKey) ? 1 : 0);
       }, 0);
+      const semesterTotalLessons = subjectLessons.reduce(
+        (count, lesson) => count + countWeeklyOccurrencesInRange(lesson.dayIndex, semesterStart, weekEnd),
+        0
+      );
+      const semesterCompletedLessons = subjectLessons.reduce(
+        (count, lesson) =>
+          count +
+          completedOccurrences.filter((entry) => {
+            const [entryLessonId, entryDateKey] = entry.split("__");
+            return (
+              entryLessonId === lesson.id &&
+              entryDateKey >= semesterStartKey &&
+              entryDateKey <= semesterEndKey
+            );
+          }).length,
+        0
+      );
+
+      const totalLessons = statsMode === "week" ? weekTotalLessons : semesterTotalLessons;
+      const completedLessons = statsMode === "week" ? weekCompletedLessons : semesterCompletedLessons;
 
       return {
         subjectId: subject.id,
         subjectName: subject.name,
         subjectColor: subject.color,
+        weekTotalLessons,
         totalLessons,
         completedLessons,
         remainingLessons: totalLessons - completedLessons,
@@ -522,12 +584,42 @@ const AppContent = () => {
         </Dialog>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="mb-3 text-sm font-semibold text-slate-700">Stats settimana</div>
-          {weeklyStats.length === 0 ? (
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">Stats lezioni</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {statsMode === "week"
+                  ? "Panoramica delle lezioni ancora da seguire in questa settimana."
+                  : `Conteggio cumulativo dal ${semesterStart.toLocaleDateString("it-IT")} fino a questa settimana.`}
+              </div>
+            </div>
+            <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+              <button
+                type="button"
+                onClick={() => setStatsMode("week")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  statsMode === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                Settimana
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatsMode("semester")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  statsMode === "semester" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                Semestre
+              </button>
+            </div>
+          </div>
+
+          {subjectStats.length === 0 ? (
             <p className="text-sm text-slate-500">Nessuna lezione pianificata in questa settimana.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {weeklyStats.map((stat) => (
+              {subjectStats.map((stat) => (
                 <div key={stat.subjectId} className="rounded-xl border border-slate-200 p-3">
                   <div className="mb-2 flex items-center gap-2">
                     <span
@@ -542,6 +634,11 @@ const AppContent = () => {
                   <div className="mt-1 text-xs text-slate-400">
                     Completate: {stat.completedLessons}/{stat.totalLessons}
                   </div>
+                  {statsMode === "semester" && (
+                    <div className="mt-2 text-[11px] text-slate-400">
+                      Lezioni settimanali previste: {stat.weekTotalLessons}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
