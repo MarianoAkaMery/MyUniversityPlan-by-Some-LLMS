@@ -162,3 +162,28 @@ test("invalid backups do not replace existing data and unreadable local data is 
   await expect(page.getByRole("alert")).toContainText("L’originale è conservato");
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBe("{broken");
 });
+
+test("private annotations survive reimport and moving a completed session without copies", async ({ page }) => {
+  const session = { ...personalActivity, id: "annotated-lesson", kind: "lesson", subjectId: "sub-1", title: "Lezione di prova", completed: true };
+  const note = "Valutare una data alternativa compatibile con gli altri impegni.";
+  const data = { version: 1, sessions: [session], sessionNotes: [{ sessionId: session.id, note }] };
+  await page.getByLabel("File impegni personali").setInputFiles(file(data));
+  await expect(page.getByRole("status")).toContainText("Attività e annotazioni importate");
+  await calendarView(page, "Mese").click();
+  await page.getByLabel("Vai al mese").fill("2030-05");
+  await page.locator('[data-date="2030-05-14"]').click();
+  const lesson = page.getByRole("article", { name: "Analisi 1 · Lezione di prova" });
+  await expect(lesson).toContainText(note);
+  await lesson.getByRole("button", { name: "Sposta", exact: true }).click();
+  await lesson.getByLabel("Nuova data").fill("2030-05-15");
+  await lesson.getByRole("button", { name: "Conferma spostamento" }).click();
+  await expect(lesson.getByRole("button", { name: "✓ Completata" })).toHaveAttribute("aria-pressed", "true");
+  await closeDay(page);
+  const secondNote = "Conservare i progressi durante lo spostamento.";
+  await page.getByLabel("File impegni personali").setInputFiles(file({ ...data, sessionNotes: [...data.sessionNotes, { sessionId: session.id, note: secondNote }] }));
+  await expect.poll(async () => (await readState(page)).sessions[0].notes).toContain(secondNote);
+  await page.reload();
+  const stored = await readState(page);
+  expect(stored.sessions).toHaveLength(1);
+  expect(stored.sessions[0]).toMatchObject({ id: session.id, completed: true, studyDate: "2030-05-15", notes: `Nota di prova\n\n${note}\n\n${secondNote}` });
+});

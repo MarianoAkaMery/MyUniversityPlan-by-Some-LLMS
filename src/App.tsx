@@ -380,7 +380,7 @@ const AppContent = () => {
     if (!file) return;
     try {
       importPersonalActivities(JSON.parse(await file.text()));
-      setNotice("Attività personali importate nel browser. Le attività già presenti sono state mantenute, senza duplicati.");
+      setNotice("Attività e annotazioni importate nel browser, senza duplicati. Date e completamenti esistenti sono stati mantenuti.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Impossibile importare le attività."); }
   };
 

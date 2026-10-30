@@ -110,6 +110,8 @@ This is a fictional example. `kind` can be `lesson`, `review`, `commitment` or `
 
 Personal import merges by stable ID and leaves existing entries unchanged, even after a move. Files are read in the browser and are never uploaded. Store actual personal files outside Git, for example in `.local/`.
 
+To add a planning note to an existing session, a private file can also contain `"sessionNotes": [{ "sessionId": "existing-session-id", "note": "Optional alternative date to evaluate" }]`. These annotations append to existing notes without duplicating text, changing the date or resetting completion. They never create another session. Import the related plan first: a missing target or invalid annotation rejects the entire import, preserving the current data. To use an alternative date, select **Sposta** on the existing session.
+
 ## Verification
 
 ```bash

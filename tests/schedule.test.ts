@@ -142,4 +142,22 @@ describe("progress and personal activities", () => {
     expect(data.subjects).toEqual(legacy.subjects);
     expect(data.lessons).toEqual(legacy.lessons);
   });
+  it("adds private annotations to the same moved/completed session without duplicate notes or sessions", () => {
+    const original = mergePersonalActivities(state(), { version: 1, sessions: [{ ...activity, notes: "Existing note", completed: true }] });
+    const moved = updateSession(original, activity.id, { studyDate: "2030-05-15" });
+    const annotation = { version: 1, sessions: [], sessionNotes: [{ sessionId: activity.id, note: "An alternative date can be evaluated." }] };
+    const annotated = mergePersonalActivities(moved, annotation);
+    expect(annotated.sessions).toHaveLength(1);
+    expect(annotated.sessions[0]).toMatchObject({ id: activity.id, studyDate: "2030-05-15", completed: true, notes: "Existing note\n\nAn alternative date can be evaluated." });
+    expect(mergePersonalActivities(annotated, annotation)).toEqual(annotated);
+    expect(readBackup({ version: 2, schedule: annotated }).schedule).toEqual(annotated);
+    expect(moved.sessions[0].notes).toBe("Existing note");
+  });
+  it("rejects malformed or missing annotation targets before adding any activities", () => {
+    const original = state();
+    for (const sessionNotes of [{}, [null], [{ sessionId: activity.id, note: " " }], [{ sessionId: "missing", note: "Note" }]]) {
+      expect(() => mergePersonalActivities(original, { version: 1, sessions: [activity], sessionNotes })).toThrow();
+    }
+    expect(original.sessions).toEqual([]);
+  });
 });

@@ -87,5 +87,22 @@ export function mergePersonalActivities(state: ScheduleState, input: unknown): S
   if (!incoming.every(session => validateSession(session, subjectIds))) throw new Error("Attività non valida: controlla date e orari.");
   assertUnique(incoming);
   const existingIds = new Set(state.sessions.map(session => session.id));
-  return { ...state, sessions: [...state.sessions, ...incoming.filter(session => !existingIds.has(session.id))] };
+  const sessions = [...state.sessions, ...incoming.filter(session => !existingIds.has(session.id))];
+  const sessionIds = new Set(sessions.map(session => session.id));
+  const sessionNotes = input.sessionNotes ?? [];
+  if (!Array.isArray(sessionNotes)) throw new Error("Annotazioni delle sessioni non valide.");
+  const notesById = new Map<string, string[]>();
+  for (const annotation of sessionNotes) {
+    if (!record(annotation) || !text(annotation.sessionId) || !text(annotation.note)) throw new Error("Annotazione non valida: servono sessionId e note.");
+    if (!sessionIds.has(annotation.sessionId)) throw new Error("Una sessione da annotare non è presente. Importa prima il relativo piano oppure rimuovi l’annotazione dal file.");
+    notesById.set(annotation.sessionId, [...(notesById.get(annotation.sessionId) ?? []), annotation.note.trim()]);
+  }
+  return { ...state, sessions: sessions.map(session => {
+    let notes = session.notes;
+    for (const note of notesById.get(session.id) ?? []) {
+      if (!notes.includes(note)) notes = notes ? `${notes}\n\n${note}` : note;
+    }
+    // An annotation never creates a session or changes its date/completion.
+    return notes === session.notes ? session : { ...session, notes };
+  }) };
 }
