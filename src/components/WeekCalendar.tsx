@@ -1,253 +1,78 @@
-﻿import * as React from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { LessonBlock } from "./LessonBlock";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { useScheduleStore } from "../hooks/useScheduleStore";
-import { clamp } from "../lib/utils";
-import type { Lesson } from "../types/schedule";
-
-const DAYS = ["Lun", "Mar", "Mer", "Gio", "Ven"];
-const MONTHS = [
-  "gen",
-  "feb",
-  "mar",
-  "apr",
-  "mag",
-  "giu",
-  "lug",
-  "ago",
-  "set",
-  "ott",
-  "nov",
-  "dic",
-];
+import { clamp, cn } from "../lib/utils";
+import { addDays, DAYS, formatDate, startOfWeekMonday, toDateKey } from "../lib/calendar";
+import { packLessonsForDay } from "../lib/packLessons";
+import { EntrySummary } from "./EntrySummary";
 
 const HOUR_HEIGHT = 86;
 const LESSON_GAP_X = 6;
 
-const startOfWeekMonday = (date: Date) => {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  copy.setDate(copy.getDate() + diff);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-};
-
-const addDays = (date: Date, days: number) => {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-};
-
-const toDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const formatWeekRange = (start: Date, end: Date) => {
-  const startLabel = `${start.getDate()} ${MONTHS[start.getMonth()]}`;
-  const endLabel = `${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
-  return `${startLabel} – ${endLabel}`;
-};
-
-const formatTimeLabel = (hour: number) => `${hour}:00`;
-
-type PackedLesson = {
-  lesson: Lesson;
-  column: number;
-  columnCount: number;
-};
-
-const packLessonsForDay = (dayLessons: Lesson[]): PackedLesson[] => {
-  const sorted = [...dayLessons].sort((a, b) => {
-    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
-    return a.endMinutes - b.endMinutes;
-  });
-
-  const packed: Array<{ lesson: Lesson; column: number; groupId: number }> = [];
-  const groupColumns = new Map<number, number>();
-  let groupId = -1;
-  let active: Array<{ endMinutes: number; column: number }> = [];
-
-  for (const lesson of sorted) {
-    active = active.filter((item) => item.endMinutes > lesson.startMinutes);
-    if (active.length === 0) {
-      groupId += 1;
-    }
-
-    const usedColumns = new Set(active.map((item) => item.column));
-    let column = 0;
-    while (usedColumns.has(column)) {
-      column += 1;
-    }
-
-    active.push({ endMinutes: lesson.endMinutes, column });
-    const requiredColumns = Math.max(...active.map((item) => item.column)) + 1;
-    groupColumns.set(groupId, Math.max(groupColumns.get(groupId) ?? 1, requiredColumns));
-    packed.push({ lesson, column, groupId });
-  }
-
-  return packed.map((item) => ({
-    lesson: item.lesson,
-    column: item.column,
-    columnCount: groupColumns.get(item.groupId) ?? 1,
-  }));
-};
-
-export type WeekCalendarProps = {
-  weekOffset: number;
-  visibleStartHour: number;
-  visibleEndHour: number;
-  canPrevWeek: boolean;
-  canNextWeek: boolean;
-  onPrevWeek: () => void;
-  onNextWeek: () => void;
-};
-
-export const WeekCalendar: React.FC<WeekCalendarProps> = ({
-  weekOffset,
-  visibleStartHour,
-  visibleEndHour,
-  canPrevWeek,
-  canNextWeek,
-  onPrevWeek,
-  onNextWeek,
-}) => {
-  const { lessons, subjects, isLessonCompleted, toggleLessonCompleted } = useScheduleStore();
+export function WeekCalendar({ date, visibleStartHour, visibleEndHour, onSelectDate }: {
+  date: Date; visibleStartHour: number; visibleEndHour: number; onSelectDate: (date: string) => void;
+}) {
+  const { lessons, subjects, getEntries, isLessonCompleted, toggleLessonCompleted } = useScheduleStore();
   const startHour = Math.max(0, Math.min(23, visibleStartHour));
-  const safeEndHour = Math.max(startHour + 1, Math.min(24, visibleEndHour));
-  const today = new Date();
-  const weekStart = startOfWeekMonday(addDays(today, weekOffset * 7));
-  const weekEnd = addDays(weekStart, 4);
-  const weekLabel = formatWeekRange(weekStart, weekEnd);
-  const hours = Array.from({ length: safeEndHour - startHour }, (_, i) => startHour + i);
+  const endHour = Math.max(startHour + 1, Math.min(24, visibleEndHour));
+  const today = toDateKey(new Date());
+  const weekStart = startOfWeekMonday(date);
+  const dates = DAYS.map((_, index) => toDateKey(addDays(weekStart, index)));
+  const hours = Array.from({ length: endHour - startHour }, (_, index) => startHour + index);
   const totalHeight = hours.length * HOUR_HEIGHT;
-  const isCurrentWeek = startOfWeekMonday(today).getTime() === weekStart.getTime();
-  const subjectsById = new Map(subjects.map((subject) => [subject.id, subject]));
+  const subjectsById = new Map(subjects.map(subject => [subject.id, subject]));
 
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-lg font-semibold text-slate-900">{weekLabel}</div>
-          {isCurrentWeek && (
-            <div className="mt-1 inline-flex items-center gap-2 text-sm text-slate-500">
-              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              Oggi
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            className="h-9 w-9 rounded-full p-0"
-            onClick={onPrevWeek}
-            disabled={!canPrevWeek}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            className="h-9 w-9 rounded-full p-0"
-            onClick={onNextWeek}
-            disabled={!canNextWeek}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[64px_repeat(5,1fr)]">
-        <div />
-        {DAYS.map((label, index) => {
-          const dayDate = addDays(weekStart, index);
-          const isToday =
-            isCurrentWeek &&
-            today.getDate() === dayDate.getDate() &&
-            today.getMonth() === dayDate.getMonth();
-          return (
-            <div key={label} className="flex flex-col items-start gap-1 border-b border-slate-200 pb-3">
-              <span className="text-sm font-semibold text-slate-700">{label}</span>
-              <Badge variant={isToday ? "default" : "muted"}>
-                {dayDate.getDate()}
-              </Badge>
-            </div>
-          );
+  return <div aria-label="Calendario settimanale" className="space-y-5">
+    <div>
+      <h3 className="mb-3 text-sm font-semibold text-slate-700">Sessioni e impegni della settimana</h3>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+        {dates.map((key, index) => {
+          const entries = getEntries(key).filter(entry => entry.source === "session");
+          return <button type="button" key={key} data-date={key} onClick={() => onSelectDate(key)} aria-label={`${formatDate(key)}, dettagli giorno`}
+            aria-current={key === today ? "date" : undefined}
+            className={cn("flex min-w-0 flex-col items-stretch rounded-xl border border-slate-200 p-2 text-left hover:bg-slate-50 focus-visible:outline-violet-500", key === today && "border-sky-400 bg-sky-50/40")}>
+            <span className="mb-2 block text-sm font-semibold text-slate-700">{DAYS[index]} {Number(key.slice(-2))}{key === today && " · Oggi"}</span>
+            <span className="block space-y-1.5">{entries.map(entry => <EntrySummary key={entry.id} entry={entry} subjectName={subjectsById.get(entry.subjectId ?? "")?.name} color={subjectsById.get(entry.subjectId ?? "")?.color} />)}</span>
+            {!entries.length && <span className="text-xs text-slate-500">Nessuna sessione</span>}
+          </button>;
         })}
       </div>
-
-      <div className="mt-4 grid grid-cols-[64px_repeat(5,1fr)]">
-        <div className="flex flex-col justify-between text-xs text-slate-400" style={{ height: totalHeight }}>
-          {hours.map((hour) => (
-            <div key={hour} className="h-[86px]">
-              {formatTimeLabel(hour)}
+    </div>
+    <div>
+      <h3 className="mb-1 text-sm font-semibold text-slate-700">Orario ricorrente</h3>
+      <p className="mb-3 text-xs text-slate-500">Tocca una lezione per completarla. Su schermi piccoli scorri l’orario in orizzontale.</p>
+      <div className="overflow-x-auto rounded-xl border border-slate-200 p-3" tabIndex={0} aria-label="Orario ricorrente, scorrimento orizzontale">
+        <div className="min-w-[800px]">
+          <div className="grid grid-cols-[54px_repeat(7,1fr)]">
+            <div />
+            {dates.map((key, index) => <button type="button" key={key} onClick={() => onSelectDate(key)} className="border-b border-slate-200 pb-3 text-sm font-semibold text-slate-700" aria-label={`Dettagli ${formatDate(key)}`}>{DAYS[index]} {Number(key.slice(-2))}</button>)}
+          </div>
+          <div className="mt-3 grid grid-cols-[54px_repeat(7,1fr)]">
+            <div className="text-xs text-slate-500" style={{ height: totalHeight }}>{hours.map(hour => <div key={hour} className="h-[86px]">{hour}:00</div>)}</div>
+            <div className="col-span-7 grid grid-cols-7 border-l border-slate-200">
+              {dates.map((key, dayIndex) => {
+                const visibleStartMinutes = startHour * 60;
+                const visibleEndMinutes = endHour * 60;
+                const dayLessons = lessons.filter(lesson => lesson.dayIndex === dayIndex && lesson.endMinutes > visibleStartMinutes && lesson.startMinutes < visibleEndMinutes);
+                return <div key={key} className="relative border-r border-slate-200" style={{ height: totalHeight }}>
+                  <div className="absolute inset-0 flex flex-col">{hours.map(hour => <div key={hour} className="h-[86px] border-b border-dashed border-slate-200/70" />)}</div>
+                  {packLessonsForDay(dayLessons).map(({ lesson, column, columnCount }) => {
+                    const subject = subjectsById.get(lesson.subjectId);
+                    if (!subject) return null;
+                    const clippedStart = Math.max(lesson.startMinutes, visibleStartMinutes);
+                    const clippedEnd = Math.min(lesson.endMinutes, visibleEndMinutes);
+                    const top = clamp((clippedStart - visibleStartMinutes) * HOUR_HEIGHT / 60, 0, totalHeight - 10);
+                    const height = clamp((clippedEnd - clippedStart) * HOUR_HEIGHT / 60, 24, totalHeight - top);
+                    const width = `calc((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount})`;
+                    const left = `calc(${LESSON_GAP_X}px + ${column} * ((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount} + ${LESSON_GAP_X}px))`;
+                    return <LessonBlock key={lesson.id} lesson={lesson} subject={subject} top={top + 3} height={Math.max(20, height - 6)} left={left} width={width}
+                      completed={isLessonCompleted(lesson.id, key)} onToggle={() => toggleLessonCompleted(lesson.id, key)} />;
+                  })}
+                </div>;
+              })}
             </div>
-          ))}
-        </div>
-        <div className="col-span-5 grid grid-cols-5 border-l border-slate-200">
-          {DAYS.map((_, dayIndex) => {
-            const visibleStartMinutes = startHour * 60;
-            const visibleEndMinutes = safeEndHour * 60;
-            const dayLessons = lessons.filter(
-              (lesson) =>
-                lesson.dayIndex === dayIndex &&
-                lesson.endMinutes > visibleStartMinutes &&
-                lesson.startMinutes < visibleEndMinutes
-            );
-            const packedLessons = packLessonsForDay(dayLessons);
-
-            return (
-              <div
-                key={dayIndex}
-                className="relative border-r border-slate-200"
-                style={{ height: totalHeight }}
-              >
-                <div className="absolute inset-0 flex flex-col">
-                  {hours.map((hour) => (
-                    <div
-                      key={hour}
-                      className="h-[86px] border-b border-dashed border-slate-200/70"
-                    />
-                  ))}
-                </div>
-                {packedLessons.map(({ lesson, column, columnCount }) => {
-                  const subject = subjectsById.get(lesson.subjectId);
-                  if (!subject) return null;
-                  const dateKey = toDateKey(addDays(weekStart, dayIndex));
-                  const completed = isLessonCompleted(lesson.id, dateKey);
-
-                  const clippedStart = Math.max(lesson.startMinutes, visibleStartMinutes);
-                  const clippedEnd = Math.min(lesson.endMinutes, visibleEndMinutes);
-                  const startOffset = (clippedStart - startHour * 60) * (HOUR_HEIGHT / 60);
-                  const rawHeight = (clippedEnd - clippedStart) * (HOUR_HEIGHT / 60);
-                  const top = clamp(startOffset, 0, totalHeight - 10);
-                  const height = clamp(rawHeight, 24, totalHeight - top);
-                  const width = `calc((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount})`;
-                  const left = `calc(${LESSON_GAP_X}px + ${column} * ((100% - ${(columnCount + 1) * LESSON_GAP_X}px) / ${columnCount} + ${LESSON_GAP_X}px))`;
-
-                  return (
-                    <LessonBlock
-                      key={lesson.id}
-                      lesson={lesson}
-                      subject={subject}
-                      top={top + 6}
-                      height={height - 12}
-                      left={left}
-                      width={width}
-                      completed={completed}
-                      onToggle={() => toggleLessonCompleted(lesson.id, dateKey)}
-                    />
-                  );
-                })}
-              </div>
-            );
-          })}
+          </div>
         </div>
       </div>
     </div>
-  );
-};
+  </div>;
+}

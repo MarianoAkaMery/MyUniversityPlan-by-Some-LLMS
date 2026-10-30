@@ -1,301 +1,88 @@
-﻿import React from "react";
-import type { Lesson, ScheduleState, Subject } from "../types/schedule";
+import React from "react";
+import type { CalendarEntry, Lesson, ScheduleState, StudySession, Subject } from "../types/schedule";
+import { entriesForDate, occurrenceKey, progressInRange } from "../lib/calendar";
+import { mergePersonalActivities, migrateSchedule, STORAGE_KEY, toggleRecurring, updateSession, validateSession } from "../lib/schedule";
+import { importQuantumPlan } from "../lib/quantumPlan";
+import { seedData } from "../lib/seed";
+import { createId } from "../lib/id";
 
-const STORAGE_KEY = "unitrack-schedule-v1";
-
-const startOfWeekMonday = (date: Date) => {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  copy.setDate(copy.getDate() + diff);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-};
-
-const addDays = (date: Date, days: number) => {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-};
-
-const toDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};
-
-const occurrenceKey = (lessonId: string, dateKey: string) => `${lessonId}__${dateKey}`;
-
-type ScheduleContextValue = {
-  subjects: Subject[];
-  lessons: Lesson[];
-  completedByDate: Record<string, true>;
+type ScheduleContextValue = ScheduleState & {
+  storageError: string;
   addSubject: (subject: Omit<Subject, "id">) => void;
   removeSubject: (subjectId: string) => void;
   addLesson: (lesson: Omit<Lesson, "id">) => void;
   toggleLessonCompleted: (lessonId: string, dateKey: string) => void;
   isLessonCompleted: (lessonId: string, dateKey: string) => boolean;
-  getWeekProgress: (weekOffset: number) => { completed: number; total: number };
+  getEntries: (date: string) => CalendarEntry[];
+  getProgress: (start: string, end: string, subjectId?: string) => { completed: number; total: number };
+  saveSession: (session: StudySession) => void;
+  moveSession: (id: string, date: string) => void;
+  removeSession: (id: string) => void;
+  toggleEntry: (entry: CalendarEntry) => void;
+  importQuantum: () => void;
+  importPersonalActivities: (input: unknown) => void;
   replaceSchedule: (nextState: ScheduleState) => void;
 };
 
 const ScheduleContext = React.createContext<ScheduleContextValue | null>(null);
 
-const seedData: ScheduleState = {
-  subjects: [
-    { id: "sub-1", name: "Analisi 1", color: "#f97316" },
-    { id: "sub-2", name: "Fisica", color: "#38bdf8" },
-    { id: "sub-3", name: "Informatica", color: "#a78bfa" },
-  ],
-  lessons: [
-    {
-      id: "les-1",
-      subjectId: "sub-1",
-      dayIndex: 0,
-      startMinutes: 540,
-      endMinutes: 630,
-      notes: "Ripassare limiti prima della lezione",
-    },
-    {
-      id: "les-2",
-      subjectId: "sub-2",
-      dayIndex: 1,
-      startMinutes: 600,
-      endMinutes: 660,
-      notes: "",
-    },
-    {
-      id: "les-3",
-      subjectId: "sub-3",
-      dayIndex: 2,
-      startMinutes: 540,
-      endMinutes: 600,
-      notes: "Portare laptop",
-    },
-    {
-      id: "les-4",
-      subjectId: "sub-1",
-      dayIndex: 3,
-      startMinutes: 600,
-      endMinutes: 660,
-      notes: "",
-    },
-    {
-      id: "les-5",
-      subjectId: "sub-2",
-      dayIndex: 4,
-      startMinutes: 540,
-      endMinutes: 600,
-      notes: "",
-    },
-  ],
-  completedByDate: {},
-};
-
-const createId = () => {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-};
-
-const sanitizeSchedule = (input: ScheduleState): ScheduleState => {
-  const subjects = Array.isArray(input.subjects)
-    ? input.subjects
-        .filter(
-          (subject) =>
-            subject &&
-            typeof subject.id === "string" &&
-            typeof subject.name === "string" &&
-            typeof subject.color === "string"
-        )
-        .map((subject) => ({
-          id: subject.id,
-          name: subject.name,
-          color: subject.color,
-        }))
-    : [];
-
-  const subjectIds = new Set(subjects.map((subject) => subject.id));
-
-  const lessons = Array.isArray(input.lessons)
-    ? input.lessons
-        .filter(
-          (lesson) =>
-            lesson &&
-            typeof lesson.id === "string" &&
-            typeof lesson.subjectId === "string" &&
-            subjectIds.has(lesson.subjectId) &&
-            typeof lesson.dayIndex === "number" &&
-            lesson.dayIndex >= 0 &&
-            lesson.dayIndex <= 4 &&
-            typeof lesson.startMinutes === "number" &&
-            typeof lesson.endMinutes === "number" &&
-            lesson.endMinutes > lesson.startMinutes
-        )
-        .map((lesson) => ({
-          id: lesson.id,
-          subjectId: lesson.subjectId,
-          dayIndex: lesson.dayIndex,
-          startMinutes: lesson.startMinutes,
-          endMinutes: lesson.endMinutes,
-          notes: typeof lesson.notes === "string" ? lesson.notes : "",
-        }))
-    : [];
-
-  const completedByDate: Record<string, true> = {};
-  if (input.completedByDate && typeof input.completedByDate === "object") {
-    for (const key of Object.keys(input.completedByDate)) {
-      if (input.completedByDate[key] === true) {
-        completedByDate[key] = true;
-      }
-    }
-  }
-
-  return { subjects, lessons, completedByDate };
-};
-
-const loadSchedule = (): ScheduleState => {
-  if (typeof window === "undefined") return seedData;
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) return seedData;
-
+function loadSchedule() {
   try {
-    const parsed = JSON.parse(raw) as {
-      subjects?: Subject[];
-      lessons?: Array<Lesson & { completed?: boolean }>;
-      completedByDate?: Record<string, true>;
-    };
-
-    if (!parsed || !Array.isArray(parsed.subjects) || !Array.isArray(parsed.lessons)) {
-      return seedData;
-    }
-
-    let completedByDate: Record<string, true> =
-      parsed.completedByDate && typeof parsed.completedByDate === "object"
-        ? parsed.completedByDate
-        : {};
-
-    if (Object.keys(completedByDate).length === 0) {
-      const currentWeek = startOfWeekMonday(new Date());
-      for (const lesson of parsed.lessons) {
-        if (lesson.completed) {
-          const dateKey = toDateKey(addDays(currentWeek, lesson.dayIndex));
-          completedByDate[occurrenceKey(lesson.id, dateKey)] = true;
-        }
-      }
-    }
-
-    return sanitizeSchedule({
-      subjects: parsed.subjects,
-      lessons: parsed.lessons.map((lesson) => ({
-        id: lesson.id,
-        subjectId: lesson.subjectId,
-        dayIndex: lesson.dayIndex,
-        startMinutes: lesson.startMinutes,
-        endMinutes: lesson.endMinutes,
-        notes: typeof lesson.notes === "string" ? lesson.notes : "",
-      })),
-      completedByDate,
-    });
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return { state: raw ? migrateSchedule(JSON.parse(raw)) : seedData, error: "" };
   } catch {
-    return seedData;
+    // Don't overwrite an unreadable original with seed data.
+    return { state: seedData, error: "Non è stato possibile leggere i dati locali. L’originale è conservato; il salvataggio è sospeso. Ripristina un backup dalle impostazioni." };
   }
-};
+}
 
 export const ScheduleProvider = ({ children }: { children: React.ReactNode }) => {
-  const [state, setState] = React.useState<ScheduleState>(() => loadSchedule());
+  const [loaded] = React.useState(loadSchedule);
+  const [state, setState] = React.useState(loaded.state);
+  const [loadError, setLoadError] = React.useState(loaded.error);
+  const [writeError, setWriteError] = React.useState("");
 
   React.useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
-
-  const addSubject = (subject: Omit<Subject, "id">) => {
-    setState((prev) => ({
-      ...prev,
-      subjects: [...prev.subjects, { ...subject, id: createId() }],
-    }));
-  };
-
-  const removeSubject = (subjectId: string) => {
-    setState((prev) => {
-      const removedLessonIds = new Set(
-        prev.lessons.filter((lesson) => lesson.subjectId === subjectId).map((lesson) => lesson.id)
-      );
-
-      const nextCompletedByDate: Record<string, true> = {};
-      for (const key of Object.keys(prev.completedByDate)) {
-        const lessonId = key.split("__")[0];
-        if (!removedLessonIds.has(lessonId)) {
-          nextCompletedByDate[key] = true;
-        }
-      }
-
-      return {
-        ...prev,
-        subjects: prev.subjects.filter((subject) => subject.id !== subjectId),
-        lessons: prev.lessons.filter((lesson) => lesson.subjectId !== subjectId),
-        completedByDate: nextCompletedByDate,
-      };
-    });
-  };
-
-  const addLesson = (lesson: Omit<Lesson, "id">) => {
-    setState((prev) => ({
-      ...prev,
-      lessons: [...prev.lessons, { ...lesson, id: createId() }],
-    }));
-  };
-
-  const toggleLessonCompleted = (lessonId: string, dateKey: string) => {
-    const key = occurrenceKey(lessonId, dateKey);
-    setState((prev) => {
-      const nextCompletedByDate = { ...prev.completedByDate };
-      if (nextCompletedByDate[key]) {
-        delete nextCompletedByDate[key];
-      } else {
-        nextCompletedByDate[key] = true;
-      }
-      return {
-        ...prev,
-        completedByDate: nextCompletedByDate,
-      };
-    });
-  };
-
-  const isLessonCompleted = (lessonId: string, dateKey: string) => {
-    return Boolean(state.completedByDate[occurrenceKey(lessonId, dateKey)]);
-  };
-
-  const getWeekProgress = (weekOffset: number) => {
-    const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
-    const completed = state.lessons.reduce((count, lesson) => {
-      const dateKey = toDateKey(addDays(weekStart, lesson.dayIndex));
-      return count + (state.completedByDate[occurrenceKey(lesson.id, dateKey)] ? 1 : 0);
-    }, 0);
-
-    return {
-      completed,
-      total: state.lessons.length,
-    };
-  };
-
-  const replaceSchedule = (nextState: ScheduleState) => {
-    setState(sanitizeSchedule(nextState));
-  };
+    if (loadError) return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      setWriteError("");
+    } catch {
+      setWriteError("Salvataggio locale non riuscito. Scarica un backup prima di chiudere la pagina.");
+    }
+  }, [state, loadError]);
 
   const value: ScheduleContextValue = {
-    subjects: state.subjects,
-    lessons: state.lessons,
-    completedByDate: state.completedByDate,
-    addSubject,
-    removeSubject,
-    addLesson,
-    toggleLessonCompleted,
-    isLessonCompleted,
-    getWeekProgress,
-    replaceSchedule,
+    ...state,
+    storageError: loadError || writeError,
+    addSubject: subject => setState(prev => ({ ...prev, subjects: [...prev.subjects, { ...subject, id: createId() }] })),
+    removeSubject: subjectId => setState(prev => {
+      const removedIds = prev.lessons.filter(lesson => lesson.subjectId === subjectId).map(lesson => lesson.id);
+      return { ...prev, subjects: prev.subjects.filter(subject => subject.id !== subjectId),
+        lessons: prev.lessons.filter(lesson => lesson.subjectId !== subjectId),
+        sessions: prev.sessions.filter(session => session.subjectId !== subjectId),
+        completedByDate: Object.fromEntries(Object.entries(prev.completedByDate).filter(([key]) => !removedIds.some(id => key.startsWith(`${id}__`)))),
+      };
+    }),
+    addLesson: lesson => setState(prev => ({ ...prev, lessons: [...prev.lessons, { ...lesson, id: createId() }] })),
+    toggleLessonCompleted: (id, date) => setState(prev => toggleRecurring(prev, id, date)),
+    isLessonCompleted: (id, date) => Boolean(state.completedByDate[occurrenceKey(id, date)]),
+    getEntries: date => entriesForDate(state, date),
+    getProgress: (start, end, subjectId) => progressInRange(state, start, end, subjectId),
+    saveSession: session => {
+      if (!validateSession(session, new Set(state.subjects.map(subject => subject.id)))) throw new Error("Controlla date, materia e durata della sessione.");
+      setState(prev => prev.sessions.some(item => item.id === session.id) ? updateSession(prev, session.id, session) : { ...prev, sessions: [...prev.sessions, session] });
+    },
+    moveSession: (id, date) => setState(prev => updateSession(prev, id, { studyDate: date })),
+    removeSession: id => setState(prev => ({ ...prev, sessions: prev.sessions.filter(session => session.id !== id) })),
+    toggleEntry: entry => setState(prev => entry.source === "recurring" ? toggleRecurring(prev, entry.id, entry.date) :
+      updateSession(prev, entry.id, { completed: !prev.sessions.find(session => session.id === entry.id)?.completed })),
+    importQuantum: () => setState(importQuantumPlan),
+    importPersonalActivities: input => {
+      mergePersonalActivities(state, input); // Validate synchronously, before scheduling the update.
+      setState(prev => mergePersonalActivities(prev, input));
+    },
+    replaceSchedule: next => { setState(migrateSchedule(next)); setLoadError(""); },
   };
 
   return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
@@ -303,8 +90,6 @@ export const ScheduleProvider = ({ children }: { children: React.ReactNode }) =>
 
 export const useScheduleStore = () => {
   const ctx = React.useContext(ScheduleContext);
-  if (!ctx) {
-    throw new Error("useScheduleStore must be used within ScheduleProvider");
-  }
+  if (!ctx) throw new Error("useScheduleStore must be used within ScheduleProvider");
   return ctx;
 };

@@ -29,3 +29,8 @@ Thumbs.db
 
 # local deploy metadata
 .vercel/
+
+# Private planner data and local verification artifacts: never publish.
+.local/
+test-results/
+playwright-report/

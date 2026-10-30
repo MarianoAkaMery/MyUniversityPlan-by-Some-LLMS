@@ -1,14 +1,20 @@
 ﻿import * as React from "react";
 import { Download, Eye, SlidersHorizontal, Upload } from "lucide-react";
 import { ScheduleProvider, useScheduleStore } from "./hooks/useScheduleStore";
-import { WeekCalendar } from "./components/WeekCalendar";
+import { PlannerCalendar } from "./components/PlannerCalendar";
+import { DayDetails } from "./components/DayDetails";
+import { SessionEditor } from "./components/SessionEditor";
+import { addDays, fromDateKey, isDateKey, startOfWeekMonday, toDateKey } from "./lib/calendar";
+import { readBackup } from "./lib/schedule";
+import { QUANTUM_PLAN_ID } from "./lib/quantumPlan";
 import { AddLessonDialog } from "./components/AddLessonDialog";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Input } from "./components/ui/input";
-import type { ScheduleState } from "./types/schedule";
+import type { CalendarView, ScheduleState, StudySession } from "./types/schedule";
 
+const CALENDAR_VIEW_STORAGE_KEY = "unitrack-calendar-view-v1";
 const CALENDAR_WINDOW_STORAGE_KEY = "unitrack-calendar-window-v1";
 const USERNAME_STORAGE_KEY = "unitrack-username-v1";
 const COURSE_NOTES_STORAGE_KEY = "unitrack-course-notes-v1";
@@ -20,7 +26,8 @@ type CalendarWindow = { startHour: number; endHour: number };
 type CumulativeWindow = { startDate: string };
 
 type BackupPayload = {
-  version: 1;
+  version: 2;
+  calendarView: CalendarView;
   exportedAt: string;
   username: string;
   courseNotes: string;
@@ -28,28 +35,6 @@ type BackupPayload = {
   calendarWindow: CalendarWindow | null;
   cumulativeWindow: CumulativeWindow | null;
   schedule: ScheduleState;
-};
-
-const startOfWeekMonday = (date: Date) => {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  copy.setDate(copy.getDate() + diff);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-};
-
-const addDays = (date: Date, days: number) => {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-};
-
-const toDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 };
 
 const formatHourLabel = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
@@ -76,34 +61,10 @@ const sanitizeFilename = (raw: string) => {
   return cleaned || "unitrack-backup";
 };
 
-const countWeeklyOccurrencesInRange = (dayIndex: number, start: Date, end: Date) => {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  startDate.setHours(0, 0, 0, 0);
-  endDate.setHours(0, 0, 0, 0);
-
-  if (endDate < startDate) return 0;
-
-  const targetDay = dayIndex + 1;
-  const firstOccurrence = new Date(startDate);
-  const delta = (targetDay - firstOccurrence.getDay() + 7) % 7;
-  firstOccurrence.setDate(firstOccurrence.getDate() + delta);
-
-  if (firstOccurrence > endDate) return 0;
-
-  const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
-  return Math.floor((endDate.getTime() - firstOccurrence.getTime()) / MS_PER_WEEK) + 1;
-};
-
-const fromDateKey = (dateKey: string) => {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(year, (month || 1) - 1, day || 1);
-};
-
 const isValidCumulativeWindow = (value: unknown): value is CumulativeWindow => {
   if (!value || typeof value !== "object") return false;
   const maybe = value as { startDate?: unknown };
-  return typeof maybe.startDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(maybe.startDate);
+  return isDateKey(maybe.startDate);
 };
 
 const parseInlineMarkdown = (text: string): React.ReactNode[] => {
@@ -189,9 +150,20 @@ const renderMarkdownPreview = (markdown: string) => {
 };
 
 const AppContent = () => {
-  const { subjects, lessons, isLessonCompleted, getWeekProgress, replaceSchedule, completedByDate } =
-    useScheduleStore();
-  const [weekOffset, setWeekOffset] = React.useState(0);
+  const { subjects, lessons, sessions, importedPlans, getProgress, replaceSchedule, completedByDate, importQuantum, importPersonalActivities, storageError } = useScheduleStore();
+  const [calendarDate, setCalendarDate] = React.useState(() => new Date());
+  const [calendarView, setCalendarView] = React.useState<CalendarView>(() => {
+    try { return window.localStorage.getItem(CALENDAR_VIEW_STORAGE_KEY) === "month" ? "month" : "week"; } catch { return "week"; }
+  });
+  const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState<{ date: string; session?: StudySession } | null>(null);
+  const [notice, setNotice] = React.useState("");
+  const personalInputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    try { window.localStorage.setItem(CALENDAR_VIEW_STORAGE_KEY, calendarView); }
+    catch { setNotice("Impossibile salvare la vista preferita in questo browser."); }
+  }, [calendarView]);
+  const focusDate = (date: string) => { setCalendarDate(fromDateKey(date)); setSelectedDate(date); };
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [statsMode, setStatsMode] = React.useState<"week" | "semester">("week");
   const [calendarWindow, setCalendarWindow] = React.useState<CalendarWindow | null>(null);
@@ -206,10 +178,10 @@ const AppContent = () => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const notesTextareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const MIN_WEEK_OFFSET = -52;
-  const MAX_WEEK_OFFSET = 52;
-  const { completed, total } = getWeekProgress(weekOffset);
-  const weekStart = startOfWeekMonday(addDays(new Date(), weekOffset * 7));
+  const weekStart = startOfWeekMonday(calendarDate);
+  const periodStart = calendarView === "month" ? new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1) : weekStart;
+  const periodEnd = calendarView === "month" ? new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0) : addDays(weekStart, 6);
+  const { completed, total } = getProgress(toDateKey(periodStart), toDateKey(periodEnd));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -327,18 +299,15 @@ const AppContent = () => {
 
   const exportBackup = () => {
     const payload: BackupPayload = {
-      version: 1,
+      version: 2,
+      calendarView,
       exportedAt: new Date().toISOString(),
       username,
       courseNotes,
       generalCourseNotes: courseNotes,
       calendarWindow,
       cumulativeWindow,
-      schedule: {
-        subjects,
-        lessons,
-        completedByDate,
-      },
+      schedule: { schemaVersion: 2, subjects, lessons, completedByDate, sessions, importedPlans },
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -355,13 +324,9 @@ const AppContent = () => {
 
   const importBackupFromFile = async (file: File) => {
     const rawText = await file.text();
-    const parsed = JSON.parse(rawText) as Partial<BackupPayload>;
-
-    if (!parsed || typeof parsed !== "object" || !parsed.schedule) {
-      throw new Error("Formato backup non valido");
-    }
-
-    replaceSchedule(parsed.schedule as ScheduleState);
+    const parsed = readBackup(JSON.parse(rawText));
+    replaceSchedule(parsed.schedule);
+    if (parsed.calendarView === "week" || parsed.calendarView === "month") setCalendarView(parsed.calendarView);
 
     if (typeof parsed.username === "string" && parsed.username.trim()) {
       setUsername(parsed.username.trim());
@@ -399,13 +364,24 @@ const AppContent = () => {
     event.currentTarget.value = "";
     if (!file) return;
 
+    if (!window.confirm("Ripristinare questo backup? Sostituirà i dati attuali in questo browser. Scarica prima un backup se vuoi conservarli.")) return;
     try {
       await importBackupFromFile(file);
       setIsSettingsOpen(false);
       window.alert("Backup importato correttamente.");
-    } catch {
-      window.alert("Impossibile importare il file selezionato.");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Impossibile importare il file selezionato.");
     }
+  };
+
+  const onPersonalImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    try {
+      importPersonalActivities(JSON.parse(await file.text()));
+      setNotice("Attività personali importate nel browser. Le attività già presenti sono state mantenute, senza duplicati.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Impossibile importare le attività."); }
   };
 
   const updateCourseNotes = (nextValue: string, selectionStart?: number, selectionEnd?: number) => {
@@ -460,84 +436,63 @@ const AppContent = () => {
     updateCourseNotes(next, start, start + markdownLink.length);
   };
 
-  const completedOccurrences = Object.keys(completedByDate);
-  const cumulativeStartKey = cumulativeWindow?.startDate ?? toDateKey(weekStart);
+  const cumulativeStartKey = cumulativeWindow?.startDate ?? toDateKey(periodStart);
   const cumulativeStartDate = fromDateKey(cumulativeStartKey);
   const cumulativeCheckpointDate = today;
-  const cumulativeCheckpointKey = toDateKey(cumulativeCheckpointDate);
-
-  const subjectStats = subjects
-    .map((subject) => {
-      const subjectLessons = lessons.filter((lesson) => lesson.subjectId === subject.id);
-      const weekTotalLessons = subjectLessons.length;
-      const weekCompletedLessons = subjectLessons.reduce((count, lesson) => {
-        const dateKey = toDateKey(addDays(weekStart, lesson.dayIndex));
-        return count + (isLessonCompleted(lesson.id, dateKey) ? 1 : 0);
-      }, 0);
-      const cumulativeScheduledToDate = subjectLessons.reduce(
-        (count, lesson) =>
-          count + countWeeklyOccurrencesInRange(lesson.dayIndex, cumulativeStartDate, cumulativeCheckpointDate),
-        0
-      );
-      const cumulativeCompletedLessons = subjectLessons.reduce(
-        (count, lesson) =>
-          count +
-          completedOccurrences.filter((entry) => {
-            const [entryLessonId, entryDateKey] = entry.split("__");
-            return (
-              entryLessonId === lesson.id &&
-              entryDateKey >= cumulativeStartKey &&
-              entryDateKey <= cumulativeCheckpointKey
-            );
-          }).length,
-        0
-      );
-      const cumulativeRemainingLessons = Math.max(cumulativeScheduledToDate - cumulativeCompletedLessons, 0);
-
-      const totalLessons = statsMode === "week" ? weekTotalLessons : cumulativeScheduledToDate;
-      const completedLessons = statsMode === "week" ? weekCompletedLessons : cumulativeCompletedLessons;
-      const remainingLessons = statsMode === "week" ? weekTotalLessons - weekCompletedLessons : cumulativeRemainingLessons;
-
-      return {
-        subjectId: subject.id,
-        subjectName: subject.name,
-        subjectColor: subject.color,
-        weekTotalLessons,
-        totalLessons,
-        completedLessons,
-        remainingLessons,
-      };
-    })
-    .filter((item) => item.totalLessons > 0)
-    .sort((a, b) => {
-      if (b.remainingLessons !== a.remainingLessons) return b.remainingLessons - a.remainingLessons;
-      return b.totalLessons - a.totalLessons;
-    });
+  const statsStart = statsMode === "week" ? toDateKey(periodStart) : cumulativeStartKey;
+  const statsEnd = statsMode === "week" ? toDateKey(periodEnd) : toDateKey(today);
+  const subjectStats = subjects.map(subject => {
+    const progress = getProgress(statsStart, statsEnd, subject.id);
+    return { subjectId: subject.id, subjectName: subject.name, subjectColor: subject.color,
+      totalLessons: progress.total, completedLessons: progress.completed, remainingLessons: progress.total - progress.completed };
+  }).filter(stat => stat.totalLessons > 0).sort((a, b) => b.remainingLessons - a.remainingLessons);
+  const quantumSubject = subjects.find(subject => subject.name.trim().toLowerCase() === "quantum physics");
+  const quantumSessions = sessions.filter(session => session.subjectId === quantumSubject?.id && session.kind === "lesson");
+  const priorQuantumCount = quantumSubject?.priorCompletedLessons?.length ?? 0;
 
   return (
-    <div className="app-shell min-h-screen px-6 py-10">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
+    <div className="app-shell min-h-screen px-2 py-4 sm:px-6 sm:py-10">
+      <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white/80 px-6 py-5 shadow-soft backdrop-blur">
           <div>
             <div className="font-display text-2xl font-bold text-slate-900">
               UniTrack - Welcome {username}
             </div>
-            <div className="text-sm text-slate-500">{completed}/{total} lezioni questa settimana</div>
+            <div className="text-sm text-slate-500">{completed}/{total} lezioni completate nel {calendarView === "month" ? "mese" : "periodo"} visualizzato</div>
             <div className="text-xs text-slate-400">
               Vista calendario: {formatHourLabel(visibleStartHour)} - {formatHourLabel(visibleEndHour)}
               {calendarWindow ? " (manuale)" : " (automatica)"}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" className="h-10" onClick={() => setIsSettingsOpen(true)}>
               <SlidersHorizontal className="mr-2 h-4 w-4" />
               Impostazioni
             </Button>
             <AddLessonDialog>
-              <Button className="h-10">+ Aggiungi</Button>
+              <Button variant="secondary" className="h-10">Orario e materie</Button>
             </AddLessonDialog>
+            <Button className="h-10" onClick={() => setEditing({ date: selectedDate ?? toDateKey(calendarDate) })}>+ Nuova sessione</Button>
           </div>
         </header>
+
+        {storageError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{storageError}</p>}
+        <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-soft" aria-label="Piano Quantum">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-xl">
+              <h2 className="font-semibold text-slate-900">Quantum Physics · recupero lezioni</h2>
+              <p className="mt-1 text-sm text-slate-600">Piano di studio dal 2 novembre al 1 dicembre 2026. L1–L3 già studiate; registrazioni L14–L22 provvisorie. Orari e durate da definire.</p>
+              {quantumSubject && <p className="mt-2 text-sm font-semibold text-violet-900" data-testid="quantum-progress">{priorQuantumCount + quantumSessions.filter(session => session.completed).length}/{priorQuantumCount + quantumSessions.length} lezioni studiate · {priorQuantumCount} precedenti senza data</p>}
+            </div>
+            <Button onClick={() => { importQuantum(); setCalendarView("month"); setCalendarDate(new Date(2026, 10, 1)); setSelectedDate(null); setNotice(importedPlans.includes(QUANTUM_PLAN_ID) ? "Il piano Quantum è già presente. Modifiche e completamenti sono stati mantenuti." : "Piano Quantum importato. Puoi aggiungere separatamente i tuoi impegni personali."); }}>Importa piano Quantum novembre 2026</Button>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
+            <Button variant="secondary" onClick={() => personalInputRef.current?.click()}>Importa impegni personali</Button>
+            <input ref={personalInputRef} aria-label="File impegni personali" type="file" accept="application/json,.json" className="hidden" onChange={onPersonalImport} />
+            <p className="text-xs text-slate-600">I dati restano in questo browser. Nessuna sincronizzazione tra dispositivi.</p>
+          </div>
+          {notice && <p role="status" className="mt-3 text-sm text-violet-900">{notice}</p>}
+        </section>
 
         <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <DialogContent>
@@ -546,6 +501,7 @@ const AppContent = () => {
             </DialogHeader>
 
             <div className="space-y-5">
+              <p className="text-sm text-slate-600">Salvataggio locale in questo browser, senza sincronizzazione tra dispositivi. Il backup JSON include anche sessioni e impegni personali; conservalo privatamente.</p>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-600">Nome utente</label>
                 <Input
@@ -658,7 +614,7 @@ const AppContent = () => {
               <div className="text-sm font-semibold text-slate-700">Stats lezioni</div>
               <div className="mt-1 text-xs text-slate-500">
                 {statsMode === "week"
-                  ? "Panoramica delle lezioni ancora da seguire in questa settimana."
+                  ? `Lezioni del ${calendarView === "month" ? "mese" : "periodo"} visualizzato: ${periodStart.toLocaleDateString("it-IT")} – ${periodEnd.toLocaleDateString("it-IT")}. Ripasso e impegni esclusi.`
                   : `Conteggio cumulativo dal ${cumulativeStartDate.toLocaleDateString("it-IT")} a oggi (${cumulativeCheckpointDate.toLocaleDateString("it-IT")}).`}
               </div>
             </div>
@@ -670,7 +626,7 @@ const AppContent = () => {
                   statsMode === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
                 }`}
               >
-                Settimana
+                {calendarView === "month" ? "Mese" : "Settimana"}
               </button>
               <button
                 type="button"
@@ -685,7 +641,7 @@ const AppContent = () => {
           </div>
 
           {subjectStats.length === 0 ? (
-            <p className="text-sm text-slate-500">Nessuna lezione pianificata in questa settimana.</p>
+            <p className="text-sm text-slate-500">Nessuna lezione pianificata nel periodo selezionato.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {subjectStats.map((stat) => (
@@ -727,15 +683,12 @@ const AppContent = () => {
           )}
         </section>
 
-        <WeekCalendar
-          weekOffset={weekOffset}
-          visibleStartHour={visibleStartHour}
-          visibleEndHour={visibleEndHour}
-          canPrevWeek={weekOffset > MIN_WEEK_OFFSET}
-          canNextWeek={weekOffset < MAX_WEEK_OFFSET}
-          onPrevWeek={() => setWeekOffset((prev) => Math.max(MIN_WEEK_OFFSET, prev - 1))}
-          onNextWeek={() => setWeekOffset((prev) => Math.min(MAX_WEEK_OFFSET, prev + 1))}
-        />
+        <PlannerCalendar date={calendarDate} view={calendarView} selectedDate={selectedDate}
+          visibleStartHour={visibleStartHour} visibleEndHour={visibleEndHour}
+          onDateChange={date => { setCalendarDate(date); setSelectedDate(null); }} onViewChange={setCalendarView} onSelectDate={setSelectedDate} />
+        {selectedDate && <DayDetails key={selectedDate} date={selectedDate} onClose={() => setSelectedDate(null)}
+          onEdit={session => setEditing({ session, date: session.studyDate })} onAdd={() => setEditing({ date: selectedDate })} onMoved={focusDate} />}
+        {editing && <SessionEditor key={editing.session?.id ?? editing.date} session={editing.session} date={editing.date} onClose={() => setEditing(null)} onSaved={focusDate} />}
 
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
           <div className="mb-2 text-sm font-semibold text-slate-700">Note generali del corso</div>

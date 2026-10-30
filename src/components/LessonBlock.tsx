@@ -35,16 +35,16 @@ export const LessonBlock: React.FC<LessonBlockProps> = ({
       onClick={onToggle}
       aria-pressed={completed}
       className={cn(
-        "lesson-card absolute rounded-2xl p-3 text-left text-white",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
-        completed && "opacity-70 grayscale"
+        "lesson-card absolute overflow-hidden rounded-lg border-l-4 bg-slate-50 p-2 text-left text-slate-900",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500",
+        completed && "ring-2 ring-inset ring-emerald-500"
       )}
       style={{
         top,
         height,
         left,
         width,
-        backgroundColor: subject.color,
+        borderLeftColor: subject.color,
       }}
     >
       <div className="text-sm font-semibold">{subject.name}</div>
@@ -52,7 +52,7 @@ export const LessonBlock: React.FC<LessonBlockProps> = ({
         {formatTime(lesson.startMinutes)} - {formatTime(lesson.endMinutes)}
       </div>
       {lesson.notes && (
-        <div className="mt-1 max-h-8 overflow-hidden text-[11px] leading-snug text-white/90">
+        <div className="mt-1 max-h-8 overflow-hidden text-[11px] leading-snug text-slate-600">
           {lesson.notes}
         </div>
       )}
