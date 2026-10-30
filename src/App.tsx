@@ -6,7 +6,6 @@ import { DayDetails } from "./components/DayDetails";
 import { SessionEditor } from "./components/SessionEditor";
 import { addDays, fromDateKey, isDateKey, startOfWeekMonday, toDateKey } from "./lib/calendar";
 import { readBackup } from "./lib/schedule";
-import { QUANTUM_PLAN_ID } from "./lib/quantumPlan";
 import { AddLessonDialog } from "./components/AddLessonDialog";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
@@ -446,10 +445,6 @@ const AppContent = () => {
     return { subjectId: subject.id, subjectName: subject.name, subjectColor: subject.color,
       totalLessons: progress.total, completedLessons: progress.completed, remainingLessons: progress.total - progress.completed };
   }).filter(stat => stat.totalLessons > 0).sort((a, b) => b.remainingLessons - a.remainingLessons);
-  const quantumSubject = subjects.find(subject => subject.name.trim().toLowerCase() === "quantum physics");
-  const quantumSessions = sessions.filter(session => session.subjectId === quantumSubject?.id && session.kind === "lesson");
-  const priorQuantumCount = quantumSubject?.priorCompletedLessons?.length ?? 0;
-
   return (
     <div className="app-shell min-h-screen px-2 py-4 sm:px-6 sm:py-10">
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -477,23 +472,6 @@ const AppContent = () => {
         </header>
 
         {storageError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{storageError}</p>}
-        <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-soft" aria-label="Piano Quantum">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-xl">
-              <h2 className="font-semibold text-slate-900">Quantum Physics · recupero lezioni</h2>
-              <p className="mt-1 text-sm text-slate-600">Piano di studio dal 2 novembre al 1 dicembre 2026. L1–L3 già studiate; registrazioni L14–L22 provvisorie. Orari e durate da definire.</p>
-              {quantumSubject && <p className="mt-2 text-sm font-semibold text-violet-900" data-testid="quantum-progress">{priorQuantumCount + quantumSessions.filter(session => session.completed).length}/{priorQuantumCount + quantumSessions.length} lezioni studiate · {priorQuantumCount} precedenti senza data</p>}
-            </div>
-            <Button onClick={() => { importQuantum(); setCalendarView("month"); setCalendarDate(new Date(2026, 10, 1)); setSelectedDate(null); setNotice(importedPlans.includes(QUANTUM_PLAN_ID) ? "Il piano Quantum è già presente. Modifiche e completamenti sono stati mantenuti." : "Piano Quantum importato. Puoi aggiungere separatamente i tuoi impegni personali."); }}>Importa piano Quantum novembre 2026</Button>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-            <Button variant="secondary" onClick={() => personalInputRef.current?.click()}>Importa impegni personali</Button>
-            <input ref={personalInputRef} aria-label="File impegni personali" type="file" accept="application/json,.json" className="hidden" onChange={onPersonalImport} />
-            <p className="text-xs text-slate-600">I dati restano in questo browser. Nessuna sincronizzazione tra dispositivi.</p>
-          </div>
-          {notice && <p role="status" className="mt-3 text-sm text-violet-900">{notice}</p>}
-        </section>
-
         <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
           <DialogContent>
             <DialogHeader>
@@ -502,6 +480,25 @@ const AppContent = () => {
 
             <div className="space-y-5">
               <p className="text-sm text-slate-600">Salvataggio locale in questo browser, senza sincronizzazione tra dispositivi. Il backup JSON include anche sessioni e impegni personali; conservalo privatamente.</p>
+              <section className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4" aria-labelledby="imports-heading">
+                <div>
+                  <h3 id="imports-heading" className="text-sm font-semibold text-slate-800">Importa un piano o le tue attività</h3>
+                  <p className="mt-1 text-xs text-slate-600">Il piano Quantum è un esempio facoltativo. Le attività personali si aggiungono senza sovrascrivere i corsi.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="secondary" onClick={() => {
+                    const alreadyImported = importedPlans.includes("quantum-november-2026-v1");
+                    importQuantum();
+                    setCalendarView("month");
+                    setCalendarDate(new Date(2026, 10, 1));
+                    setSelectedDate(null);
+                    setNotice(alreadyImported ? "Il piano è già presente. Modifiche e completamenti sono stati mantenuti." : "Piano di esempio importato.");
+                  }}>Importa piano Quantum novembre 2026</Button>
+                  <Button type="button" variant="secondary" onClick={() => personalInputRef.current?.click()}>Importa attività da file</Button>
+                  <input ref={personalInputRef} aria-label="File attività personali" type="file" accept="application/json,.json" className="hidden" onChange={onPersonalImport} />
+                </div>
+                {notice && <p role="status" className="text-sm text-slate-700">{notice}</p>}
+              </section>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-600">Nome utente</label>
                 <Input

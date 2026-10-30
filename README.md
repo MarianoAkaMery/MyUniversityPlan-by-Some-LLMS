@@ -17,7 +17,7 @@ It is designed for fast day-to-day usage: add subjects, schedule lessons, track 
 - Dated lessons with separate study/recording dates, optional time and duration, notes and provisional status
 - Edit, move and delete individual sessions; moving a session preserves its completion
 - Distinct styles for lessons, review/exercises, commitments and days without study
-- Explicit, repeatable Quantum November 2026 academic-plan import
+- Optional, repeatable study-plan import
 - General course notes with mini markdown editor (`bold`, `italic`, bullets, links)
 - Notes view switch (`Editor` / `Formatted`)
 - Configurable visible calendar time window
@@ -80,13 +80,13 @@ From `Settings` you can:
 
 Version 2 backups include schedule data, dated sessions, private commitments, previous study, import markers, completion history, username, preferred view, calendar/cumulative windows and general course notes. Version 1 backups remain supported, including the `generalCourseNotes` field. Invalid or unsupported backups are rejected before changing the schedule. Restore replaces browser data after confirmation; personal-file import merges instead.
 
-## Quantum plan and private activities
+## Optional study plans and private activities
 
-Click **Importa piano Quantum novembre 2026** to add L4–L22 and the four review/exercise slots. L1–L3 are recorded as already studied without assigning dates. L14–L22 have provisional recording dates. Unknown start times and durations remain unset. Existing courses are preserved, and repeating the import preserves edits, moves, completions and deletions. The plan marker also survives backup/restore.
+From **Impostazioni → Importa un piano o le tue attività**, optionally click **Importa piano Quantum novembre 2026** to add L4–L22 and the four review/exercise slots. The public home screen stays course-neutral; Quantum is an opt-in example. L1–L3 are recorded as already studied without assigning dates. L14–L22 have provisional recording dates. Unknown start times and durations remain unset. Existing courses are preserved, and repeating the import preserves edits, moves, completions and deletions. The plan marker also survives backup/restore.
 
 The course progress summary includes previous study. Weekly/monthly/cumulative statistics count dated and recurring lessons within the displayed interval; previous study without a date, reviews and personal events are not counted as dated lessons.
 
-Use **Importa impegni personali** to select a private JSON file with this structure:
+From **Impostazioni → Importa un piano o le tue attività**, use **Importa attività da file** to select a private JSON file with this structure:
 
 ```json
 {

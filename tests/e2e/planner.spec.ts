@@ -13,6 +13,11 @@ const file = (data: unknown) => ({ name: "test-data.json", mimeType: "applicatio
 const readState = (page: Page) => page.evaluate(key => JSON.parse(localStorage.getItem(key)!), storageKey);
 const calendarView = (page: Page, name: string) => page.getByRole("group", { name: "Vista calendario" }).getByRole("button", { name, exact: true });
 const closeDay = (page: Page) => page.getByRole("dialog").getByRole("button", { name: "Chiudi", exact: true }).click();
+const importPlan = async (page: Page) => {
+  await page.getByRole("button", { name: "Impostazioni", exact: true }).click();
+  await page.getByRole("button", { name: planButton }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Chiudi", exact: true }).click();
+};
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-10-30T12:00:00+01:00"));
@@ -32,15 +37,16 @@ test("navigates months, years and today; remembers the view and fits the screen"
   await expect(page.getByRole("heading", { name: "ottobre 2026" })).toBeVisible();
   await page.reload();
   await expect(calendarView(page, "Mese")).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: planButton }).click();
+  await expect(page.getByText(/Quantum Physics/)).toHaveCount(0);
+  await importPlan(page);
   await expect(page.getByLabel("Calendario mensile").locator("[data-date]")).toHaveCount(42);
-  await expect(page.getByTestId("quantum-progress")).toContainText("3/22");
+  await expect(page.getByRole("heading", { name: "Stats lezioni" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole("region", { name: "novembre 2026" }).screenshot({ path: testInfo.outputPath("month.png") });
 });
 
 test("completion, movement, editing and deletion stay coherent across views and reloads", async ({ page }) => {
-  await page.getByRole("button", { name: planButton }).click();
+  await importPlan(page);
   await page.locator('[data-date="2026-11-02"]').click();
   const lesson = page.getByRole("article", { name: "Quantum Physics · Lezione 4", exact: true });
   await expect(lesson).toContainText("Registrazione: 25 settembre 2026");
@@ -59,7 +65,6 @@ test("completion, movement, editing and deletion stay coherent across views and 
   await expect(lesson).toContainText("90 min");
   await expect(lesson).toContainText("Esercizi da rivedere");
   await closeDay(page);
-  await expect(page.getByTestId("quantum-progress")).toContainText("4/22");
   const stats = page.locator("section").filter({ has: page.getByText("Stats lezioni", { exact: true }) });
   await expect(stats).toContainText("Completate: 1/2");
   await calendarView(page, "Settimana").click();
@@ -67,7 +72,7 @@ test("completion, movement, editing and deletion stay coherent across views and 
   await expect(stats).toContainText("Completate: 1/3");
   await page.reload();
   await expect(calendarView(page, "Settimana")).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: planButton }).click();
+  await importPlan(page);
   expect((await readState(page)).sessions).toHaveLength(23);
   await page.getByLabel("Vai al mese").fill("2026-12");
   await page.locator('[data-date="2026-12-05"]').click();
@@ -76,7 +81,7 @@ test("completion, movement, editing and deletion stay coherent across views and 
   await lesson.getByRole("button", { name: "Elimina", exact: true }).click();
   await expect(lesson).toHaveCount(0);
   await closeDay(page);
-  await page.getByRole("button", { name: planButton }).click();
+  await importPlan(page);
   expect((await readState(page)).sessions).toHaveLength(22);
 });
 
@@ -90,8 +95,8 @@ test("adds dated sessions and distinguishes short commitments from full days", a
   await editor.getByRole("button", { name: "Salva sessione" }).click();
   await expect(page.getByRole("article", { name: "Analisi 1 · Lezione 99" })).toContainText("Provvisoria");
   await closeDay(page);
-  await page.getByLabel("File impegni personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
-  await page.getByLabel("File impegni personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
+  await page.getByLabel("File attività personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
+  await page.getByLabel("File attività personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
   expect((await readState(page)).sessions).toHaveLength(2);
   await calendarView(page, "Mese").click();
   await page.locator('[data-date="2030-05-14"]').click();
@@ -115,7 +120,7 @@ test("restores v1 backups, shares recurring completion, exports and restores all
   await page.locator('input[type="file"]').last().setInputFiles(file({ version: 1, username: "Studente test", generalCourseNotes: "Appunti precedenti", calendarWindow: { startHour: 8, endHour: 16 }, schedule: oldSchedule }));
   await expect(page.getByText("UniTrack - Welcome Studente test")).toBeVisible();
   await expect(page.getByText("Appunti precedenti", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: planButton }).click();
+  await importPlan(page);
   await page.locator('[data-date="2026-11-02"]').click();
   const recurring = page.getByRole("article", { name: "Corso esistente", exact: true });
   await expect(recurring.getByRole("button", { name: "✓ Completata" })).toHaveAttribute("aria-pressed", "true");
@@ -132,7 +137,7 @@ test("restores v1 backups, shares recurring completion, exports and restores all
   await expect(block).toHaveAttribute("aria-pressed", "false");
   await block.click();
   await calendarView(page, "Mese").click();
-  await page.getByLabel("File impegni personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
+  await page.getByLabel("File attività personali").setInputFiles(file({ version: 1, sessions: [personalActivity] }));
   const before = await readState(page);
   await page.getByRole("button", { name: "Impostazioni", exact: true }).click();
   const downloadPromise = page.waitForEvent("download");
@@ -167,7 +172,7 @@ test("private annotations survive reimport and moving a completed session withou
   const session = { ...personalActivity, id: "annotated-lesson", kind: "lesson", subjectId: "sub-1", title: "Lezione di prova", completed: true };
   const note = "Valutare una data alternativa compatibile con gli altri impegni.";
   const data = { version: 1, sessions: [session], sessionNotes: [{ sessionId: session.id, note }] };
-  await page.getByLabel("File impegni personali").setInputFiles(file(data));
+  await page.getByLabel("File attività personali").setInputFiles(file(data));
   await expect(page.getByRole("status")).toContainText("Attività e annotazioni importate");
   await calendarView(page, "Mese").click();
   await page.getByLabel("Vai al mese").fill("2030-05");
@@ -180,7 +185,7 @@ test("private annotations survive reimport and moving a completed session withou
   await expect(lesson.getByRole("button", { name: "✓ Completata" })).toHaveAttribute("aria-pressed", "true");
   await closeDay(page);
   const secondNote = "Conservare i progressi durante lo spostamento.";
-  await page.getByLabel("File impegni personali").setInputFiles(file({ ...data, sessionNotes: [...data.sessionNotes, { sessionId: session.id, note: secondNote }] }));
+  await page.getByLabel("File attività personali").setInputFiles(file({ ...data, sessionNotes: [...data.sessionNotes, { sessionId: session.id, note: secondNote }] }));
   await expect.poll(async () => (await readState(page)).sessions[0].notes).toContain(secondNote);
   await page.reload();
   const stored = await readState(page);
